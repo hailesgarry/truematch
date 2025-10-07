@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: randomme-backend
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Add your other environment variables here or set them in the Render dashboard
+    autoDeploy: true
+    rootDir: backend

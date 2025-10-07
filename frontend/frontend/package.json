@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@dicebear/core": "^9.2.4",
+    "@dicebear/initials": "^9.2.4"
+  }
+}

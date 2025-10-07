@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Use Tailwind's configured sans stack (Inter) globally */
+@layer base {
+  html {
+    font-family: theme("fontFamily.sans");
+    line-height: theme("lineHeight.body");
+  }
+
+  /* Headings get a slightly tighter line-height */
+  h1,
+  h2,
+  h3 {
+    line-height: theme("lineHeight.heading");
+  }
+  h4,
+  h5,
+  h6 {
+    line-height: theme("lineHeight.ui");
+  }
+
+  /* Common UI elements */
+  button,
+  input,
+  select,
+  textarea,
+  label {
+    line-height: theme("lineHeight.ui");
+  }
+}
+
+:root {
+  /* keep shared values here; no font-family/line-height needed */
+  font-weight: 400;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+}
+
+.font-logo {
+  font-family: "Pacifico", cursive;
+}
