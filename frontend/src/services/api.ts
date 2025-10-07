@@ -1,7 +1,7 @@
 import axios from "axios";
 import type { Group, User, DatingProfile } from "../types";
 
-export const API_URL = "http://localhost:8080/api";
+export const API_URL = "https://truematch-hbhr.onrender.com/api";
 export const api = axios.create({ baseURL: API_URL });
 
 export const fetchGroups = async (includeOnline = false): Promise<Group[]> => {

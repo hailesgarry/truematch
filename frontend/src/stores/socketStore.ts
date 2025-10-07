@@ -20,7 +20,7 @@ import type {
   UserReaction,
 } from "../types";
 
-const BACKEND_URL = "http://localhost:8080";
+const BACKEND_URL = "https://truematch-hbhr.onrender.com";
 
 interface SocketState {
   socket: Socket | null;
