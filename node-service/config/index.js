@@ -1,14 +1,12 @@
 function parseCorsOrigins() {
   const raw = process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || "*";
-  if (!raw) return "*";
-  const trimmed = raw.trim();
-  if (!trimmed || trimmed === "*") return "*";
-  const origins = trimmed
+  if (!raw) return ["*"];
+  const origins = raw
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
-  if (origins.length === 0) return "*";
-  if (origins.length === 1) return origins[0];
+  if (!origins.length) return ["*"];
+  if (origins.includes("*")) return ["*"];
   return origins;
 }
 

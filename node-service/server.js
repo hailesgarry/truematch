@@ -17,8 +17,23 @@ const app = express();
 const server = http.createServer(app);
 
 // CORS (now configurable via env)
+const allowedOrigins = Array.isArray(config.corsOrigins)
+  ? config.corsOrigins
+  : [String(config.corsOrigins || "*")];
+
 const corsOptions = {
-  origin: config.corsOrigins,
+  origin(requestOrigin, callback) {
+    if (!requestOrigin) {
+      return callback(null, true);
+    }
+    if (allowedOrigins.includes("*")) {
+      return callback(null, true);
+    }
+    if (allowedOrigins.includes(requestOrigin)) {
+      return callback(null, true);
+    }
+    return callback(new Error("Not allowed by CORS"));
+  },
   methods: ["GET", "POST", "PUT", "DELETE"],
   credentials: true,
   optionsSuccessStatus: 204,
@@ -28,7 +43,7 @@ app.use(cors(corsOptions));
 // Socket.IO
 const io = new Server(server, {
   cors: {
-    origin: config.corsOrigins,
+    origin: corsOptions.origin,
     methods: ["GET", "POST"],
     credentials: true,
   },
