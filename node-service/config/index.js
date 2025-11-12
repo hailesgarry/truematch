@@ -14,6 +14,6 @@ function parseCorsOrigins() {
 
 module.exports = {
   port: process.env.PORT || 8080,
-  corsOrigin: parseCorsOrigins(),
+  corsOrigins: parseCorsOrigins(),
   dataFolder: "data",
 };

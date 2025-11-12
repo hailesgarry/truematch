@@ -18,7 +18,7 @@ const server = http.createServer(app);
 
 // CORS (now configurable via env)
 const corsOptions = {
-  origin: config.corsOrigin || "http://localhost:5173",
+  origin: config.corsOrigins,
   methods: ["GET", "POST", "PUT", "DELETE"],
   credentials: true,
   optionsSuccessStatus: 204,
@@ -28,7 +28,7 @@ app.use(cors(corsOptions));
 // Socket.IO
 const io = new Server(server, {
   cors: {
-    origin: config.corsOrigin || "http://localhost:5173",
+    origin: config.corsOrigins,
     methods: ["GET", "POST"],
     credentials: true,
   },
