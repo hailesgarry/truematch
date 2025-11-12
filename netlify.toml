@@ -3,6 +3,13 @@
   publish = "dist"
   command = "npm run build"
 
+[build.environment]
+  NODE_VERSION = "20"
+  VITE_API_URL = "https://truematch-node-service.onrender.com/api"
+  VITE_PY_API_URL = "https://truematch-python-service.onrender.com/api"
+  VITE_SOCKET_URL = "https://truematch-node-service.onrender.com"
+  VITE_VAPID_PUBLIC_KEY = "BLXqhzidJwsRBSsmysoyqOKRtAIR_AYwcf1AOMHmXoGjVlHqXvbMJE8_5eAT2QyXDi0KH5w9KYRPbeJpYMdWYcU"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
