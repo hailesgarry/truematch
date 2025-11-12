@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0" y="0" width="128" height="128" rx="24" fill="#ef4444" />
+  <text x="64" y="64" text-anchor="middle" dominant-baseline="middle"
+        font-family="'Plus Jakarta Sans', Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif"
+        font-weight="800" font-size="72" letter-spacing="-2" fill="#ffffff">tm</text>
+</svg>

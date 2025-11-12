@@ -1,0 +1,27 @@
+{
+  "mappings": {
+    "dynamic": false,
+    "fields": {
+      "location": {
+        "type": "document",
+        "fields": {
+          "city": {
+            "type": "string",
+            "analyzer": "lucene.standard",
+            "searchAnalyzer": "lucene.standard"
+          },
+          "state": {
+            "type": "string",
+            "analyzer": "lucene.standard",
+            "searchAnalyzer": "lucene.standard"
+          }
+        }
+      },
+      "religion": { "type": "string", "analyzer": "lucene.keyword" },
+      "mood": { "type": "string", "analyzer": "lucene.keyword" },
+      "gender": { "type": "string", "analyzer": "lucene.keyword" },
+      "age": { "type": "number" },
+      "updatedAt": { "type": "number" }
+    }
+  }
+}

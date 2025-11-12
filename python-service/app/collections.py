@@ -1,0 +1,2 @@
+GROUP_MESSAGES_COLLECTION = "group_messages"
+DM_MESSAGES_COLLECTION = "dm_messages"

@@ -1,0 +1,15 @@
+{
+  "watch": [
+    "server.js",
+    "config/",
+    "controllers/",
+    "models/",
+    "routes/",
+    "socket/",
+    "lib/"
+  ],
+  "ignore": ["data/*.json"],
+  "ext": "js,json",
+  "delay": "500",
+  "verbose": true
+}
