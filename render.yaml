@@ -13,7 +13,7 @@ services:
       - key: PORT
         value: "8080"
       - key: CORS_ORIGIN
-        value: https://your-netlify-site.netlify.app
+        value: https://truematch-frontend.netlify.app,http://localhost:5173,http://127.0.0.1:5173
       - key: PYTHON_API_URL
         sync: false
       - key: REDIS_URL
@@ -43,7 +43,7 @@ services:
       - key: CLOUDINARY_URL
         sync: false
       - key: CORS_ORIGINS
-        value: https://your-netlify-site.netlify.app
+        value: https://truematch-frontend.netlify.app,http://localhost:5173,http://127.0.0.1:5173
 # Optional background worker if separate event processing is required
 #workers:
 #  - type: worker
