@@ -1,0 +1,55 @@
+services:
+  - type: web
+    name: truematch-node-service
+    env: docker
+    plan: starter
+    autoDeploy: true
+    healthCheckPath: /
+    dockerfilePath: node-service/Dockerfile
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "8080"
+      - key: CORS_ORIGIN
+        value: https://your-netlify-site.netlify.app
+      - key: PYTHON_API_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: KAFKA_BROKERS
+        sync: false
+      - key: CLOUDINARY_URL
+        sync: false
+
+  - type: web
+    name: truematch-python-service
+    env: docker
+    plan: starter
+    autoDeploy: true
+    healthCheckPath: /api/health/db
+    dockerfilePath: python-service/Dockerfile
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: MONGO_URI
+        sync: false
+      - key: MONGO_DB
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: KAFKA_BROKERS
+        sync: false
+      - key: CLOUDINARY_URL
+        sync: false
+      - key: CORS_ORIGINS
+        value: https://your-netlify-site.netlify.app
+# Optional background consumer if Kafka processing must run continuously
+#workers:
+#  - type: worker
+#    name: truematch-python-consumer
+#    env: docker
+#    plan: starter
+#    autoDeploy: true
+#    dockerfilePath: python-service/Dockerfile
+#    startCommand: uvicorn app.main:app --host 0.0.0.0 --port 8000
