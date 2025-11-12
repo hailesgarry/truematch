@@ -33,6 +33,9 @@ export default defineConfig(({ mode }) => {
         injectRegister: null, // we'll register manually via workbox-window
         workbox: undefined, // not used with injectManifest
         strategies: "injectManifest",
+        injectManifest: {
+          maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, // allow caching bundles up to 10 MB
+        },
         srcDir: "src",
         filename: "sw.ts",
         // Disable dev SW injection to avoid HMR issues; rely on production SW only
