@@ -5,6 +5,7 @@ services:
     plan: starter
     autoDeploy: true
     healthCheckPath: /
+    dockerContext: node-service
     dockerfilePath: node-service/Dockerfile
     envVars:
       - key: NODE_ENV
@@ -28,6 +29,7 @@ services:
     plan: starter
     autoDeploy: true
     healthCheckPath: /api/health/db
+    dockerContext: python-service
     dockerfilePath: python-service/Dockerfile
     envVars:
       - key: PORT
