@@ -1,0 +1,16 @@
+# Global Docker build exclusions
+.git
+.copilot
+.vscode
+**/.vscode
+node_modules
+**/node_modules
+frontend/dev-dist
+frontend/dist
+**/__pycache__
+**/*.pyc
+*.env
+**/*.env
+.venv
+**/.venv
+.DS_Store

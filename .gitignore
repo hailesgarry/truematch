@@ -1,0 +1,59 @@
+# General
+.DS_Store
+Thumbs.db
+*.log
+logs/
+
+# Node.js
+node_modules/
+pm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store/
+.npm/
+.cache/
+
+# Frontend builds
+frontend/dist/
+frontend/dev-dist/
+
+# TypeScript
+*.tsbuildinfo
+
+# Coverage
+coverage/
+*.lcov
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg*
+.eggs/
+*.pyo
+*.pyd
+*.pdb
+.build/
+dist/
+.python-version
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Redis/Mongo dumps
+*.rdb
+*.dump
+
+# VSCode & tooling
+.vscode/
+.copilot/
+
+# Environment files
+.env
+*.env
+.env.*
+
+# Uploads
+node-service/uploads/
