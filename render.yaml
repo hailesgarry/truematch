@@ -30,6 +30,7 @@ services:
     autoDeploy: true
     healthCheckPath: /api/health/db
     dockerfilePath: python-service/Dockerfile
+    dockerContext: python-service
     envVars:
       - key: PORT
         value: "8000"
