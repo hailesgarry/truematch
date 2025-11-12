@@ -12,11 +12,11 @@ RUN apt-get update \
         libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY python-service/requirements.txt ./
+COPY ./python-service/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY python-service/app ./app
-COPY python-service/atlas-indexes ./atlas-indexes
+COPY ./python-service/app ./app
+COPY ./python-service/atlas-indexes ./atlas-indexes
 
 EXPOSE 8000
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
