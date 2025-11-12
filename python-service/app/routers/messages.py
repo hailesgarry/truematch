@@ -7,11 +7,35 @@ import os
 import json
 from ..cache import cache as local_cache
 from ..cache_bus import publish_invalidate
-from ..kafka import publish as kafka_publish
+from ..redis_bus import publish as redis_publish
+from ..redis_cache import (
+    delete_prefix as redis_cache_delete_prefix,
+    get as redis_cache_get,
+    set as redis_cache_set,
+)
 from ..utils.http import weak_etag
 from ..collections import GROUP_MESSAGES_COLLECTION, DM_MESSAGES_COLLECTION
 
-router = APIRouter() 
+router = APIRouter()
+
+
+LATEST_CACHE_TTL = 15
+
+
+async def _invalidate_latest_cache(group_id: str) -> None:
+    prefix = f"messages:latest:{group_id}:"
+    try:
+        await local_cache.delete_prefix(prefix)
+    except Exception:
+        pass
+    try:
+        await redis_cache_delete_prefix(prefix)
+    except Exception:
+        pass
+    try:
+        await publish_invalidate(prefix)
+    except Exception:
+        pass
 
 
 def now_iso() -> str:
@@ -205,6 +229,14 @@ async def get_latest_messages(
             inm = None
 
     cached = await local_cache.get(cache_key)
+    if cached is None:
+        redis_snapshot = await redis_cache_get(cache_key)
+        if redis_snapshot is not None:
+            cached = redis_snapshot
+            try:
+                await local_cache.set(cache_key, cached, ttl_seconds=LATEST_CACHE_TTL)
+            except Exception:
+                pass
     if cached is not None:
         if response is not None:
             try:
@@ -273,7 +305,8 @@ async def get_latest_messages(
                 pass
         enriched.append(message)
 
-    await local_cache.set(cache_key, enriched, ttl_seconds=15)
+    await local_cache.set(cache_key, enriched, ttl_seconds=LATEST_CACHE_TTL)
+    await redis_cache_set(cache_key, enriched, ttl_seconds=LATEST_CACHE_TTL)
 
     if response is not None:
         try:
@@ -416,7 +449,7 @@ async def create_message(group_id: str, payload: Dict) -> Dict:
     await db[GROUP_MESSAGES_COLLECTION].insert_one(doc)
     # Publish domain event (best-effort, non-blocking)
     try:
-        await kafka_publish("messages", {
+        await redis_publish("messages", {
             "type": "message_created",
             "groupId": group_id,
             "messageId": mid,
@@ -433,6 +466,10 @@ async def create_message(group_id: str, payload: Dict) -> Dict:
         pass
     try:
         await publish_invalidate("groups:list:")
+    except Exception:
+        pass
+    try:
+        await _invalidate_latest_cache(group_id)
     except Exception:
         pass
     return _sanitize_message(doc)
@@ -509,6 +546,18 @@ async def backfill_replies(group_id: str, limit: Optional[int] = 200) -> Dict:
         except Exception:
             # non-fatal
             pass
+    try:
+        await _invalidate_latest_cache(group_id)
+    except Exception:
+        pass
+    try:
+        await local_cache.delete_prefix(f"messages:page:{group_id}:")
+    except Exception:
+        pass
+    try:
+        await publish_invalidate(f"messages:page:{group_id}:")
+    except Exception:
+        pass
     return {"checked": checked, "updated": updated}
 
 
@@ -554,12 +603,14 @@ async def edit_message(group_id: str, message_id: str, body: Dict) -> Dict:
         pass
     # Bust hot caches so subsequent fetches pull the updated payload
     try:
-        await local_cache.delete_prefix(f"messages:latest:{group_id}:")
+        await _invalidate_latest_cache(group_id)
+    except Exception:
+        pass
+    try:
         await local_cache.delete_prefix(f"messages:page:{group_id}:")
     except Exception:
         pass
     try:
-        await publish_invalidate(f"messages:latest:{group_id}:")
         await publish_invalidate(f"messages:page:{group_id}:")
     except Exception:
         pass
@@ -716,12 +767,14 @@ async def delete_message(group_id: str, message_id: str) -> Dict:
 
     # Bust hot caches so clients don't see stale media after refresh
     try:
-        await local_cache.delete_prefix(f"messages:latest:{group_id}:")
+        await _invalidate_latest_cache(group_id)
+    except Exception:
+        pass
+    try:
         await local_cache.delete_prefix(f"messages:page:{group_id}:")
     except Exception:
         pass
     try:
-        await publish_invalidate(f"messages:latest:{group_id}:")
         await publish_invalidate(f"messages:page:{group_id}:")
     except Exception:
         pass
@@ -772,6 +825,18 @@ async def react_message(group_id: str, message_id: str, body: Dict) -> Dict:
         },
         {"$set": {"reactions": reactions}}
     )
+    try:
+        await _invalidate_latest_cache(group_id)
+    except Exception:
+        pass
+    try:
+        await local_cache.delete_prefix(f"messages:page:{group_id}:")
+    except Exception:
+        pass
+    try:
+        await publish_invalidate(f"messages:page:{group_id}:")
+    except Exception:
+        pass
     return {
         "success": True,
         "messageId": message_id,

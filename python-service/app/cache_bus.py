@@ -19,13 +19,13 @@ async def handle_cache_event(topic: str, event: Dict[str, Any]) -> None:
         pass
 
 async def publish_invalidate(pattern: str) -> None:
-    """Publish an invalidation event to the cache topic. Safe no-op if Kafka disabled."""
+    """Publish an invalidation event to the cache topic. Safe no-op if Redis pub/sub disabled."""
     try:
-        from .kafka import publish as kafka_publish  # lazy import to avoid cycles
+        from .redis_bus import publish as redis_publish  # lazy import to avoid cycles
     except Exception:
         return
     try:
-        await kafka_publish("cache", {"type": "invalidate", "pattern": pattern})
+        await redis_publish("cache", {"type": "invalidate", "pattern": pattern})
     except Exception:
         # Non-fatal
         pass

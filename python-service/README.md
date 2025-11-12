@@ -18,13 +18,11 @@ pip install -r requirements.txt
 - CORS_ORIGIN=http://localhost:5173 (frontend)
 - PY_BACKEND_PORT=8081 (optional)
 
-Optional (Kafka acceleration):
+Optional (Redis acceleration):
 
-- KAFKA_ENABLED=true
-- KAFKA_BOOTSTRAP=localhost:9092
-- KAFKA_CLIENT_ID=truematch-python
-- KAFKA_TOPIC_PREFIX=tm
-- KAFKA_GROUP_ID=tm-readmodels
+- REDIS_URL=redis://localhost:6379/0 (use `rediss://` for TLS-hosted providers)
+- REDIS_PUBSUB_ENABLED=true
+- REDIS_PUBSUB_PREFIX=tm
 
 4. Run the dev server:
 
@@ -38,34 +36,17 @@ On PowerShell, ensure `%PY_BACKEND_PORT%` is defined or replace it with a number
 
 - File uploads (avatars/chat media) are handled here via Cloudinary. Configure CLOUDINARY_URL or CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET in .env.
 - MongoDB indices can be added as needed.
-- When Kafka is enabled, the service publishes lightweight events on message writes and runs a background consumer to maintain a materialized "latest messages" read model per group. The `GET /api/messages/{groupId}/latest` endpoint consults this read model first, which significantly speeds up first-load latency and reduces query cost. If Kafka is disabled or unavailable, the API continues to function using direct indexed queries and local TTL caches.
+- When Redis pub/sub is enabled, the service publishes lightweight events on message writes and runs a background subscriber to maintain a materialized "latest messages" read model per group. The `GET /api/messages/{groupId}/latest` endpoint consults this read model first, which significantly speeds up first-load latency and reduces query cost. If Redis pub/sub is disabled or unavailable, the API continues to function using direct indexed queries and local TTL caches.
 
-### Quick Kafka dev setup (Windows-friendly)
+### Quick Redis dev setup (Windows-friendly)
 
-Use Docker Desktop and the following minimal compose to run Kafka locally:
+Use Docker Desktop and the following command to run Redis locally:
 
-```yaml
-version: '3.8'
-services:
-	zookeeper:
-		image: confluentinc/cp-zookeeper:7.5.0
-		environment:
-			ZOOKEEPER_CLIENT_PORT: 2181
-			ZOOKEEPER_TICK_TIME: 2000
-		ports: ["2181:2181"]
-	kafka:
-		image: confluentinc/cp-kafka:7.5.0
-		depends_on: [zookeeper]
-		ports: ["9092:9092"]
-		environment:
-			KAFKA_BROKER_ID: 1
-			KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-			KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
-			KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
-			KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+```
+docker run --name tm-redis -p 6379:6379 -d redis:7-alpine
 ```
 
-Start it and set `KAFKA_ENABLED=true` and `KAFKA_BOOTSTRAP=localhost:9092` in `.env`.
+Start it and set `REDIS_URL=redis://localhost:6379/0` and `REDIS_PUBSUB_ENABLED=true` in `.env`.
 
 - The Node service should disable HTTP API routes once Python is fully handling APIs.
 
@@ -96,7 +77,7 @@ Base URL: http://localhost:8081/api (configurable via PY_BACKEND_PORT)
 Performance notes:
 
 - On cache miss, the API first checks a materialized `read_messages_latest` document containing the latest window for the group. This keeps first loads fast without hitting large message collections.
-- Kafka events update this read model in near real-time on each write. If Kafka is down, the API transparently falls back to indexed queries.
+- Redis pub/sub events update this read model in near real-time on each write. If pub/sub is down, the API transparently falls back to indexed queries.
 
 - POST /messages/{groupId}
   Body example:

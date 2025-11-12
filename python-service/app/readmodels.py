@@ -51,8 +51,8 @@ async def _update_latest_messages(group_id: str, message_id: str, window: int = 
         pass
 
 
-async def kafka_event_handler(topic: str, event: Dict[str, Any]) -> None:
-    """Handle Kafka events and update read models to accelerate reads."""
+async def event_stream_handler(topic: str, event: Dict[str, Any]) -> None:
+    """Handle cross-instance events and update read models/caches."""
     t = (event.get("type") or "").lower()
     # First, process cache bus messages
     await handle_cache_event(topic, event)

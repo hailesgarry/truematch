@@ -10,6 +10,16 @@ try:
 except Exception:
     pass
 
+def _redis_pubsub_enabled_default() -> bool:
+    explicit = os.getenv("REDIS_PUBSUB_ENABLED")
+    if explicit is not None:
+        return explicit.lower() in ("1", "true", "yes")
+    legacy = os.getenv("KAFKA_ENABLED")
+    if legacy is not None:
+        return legacy.lower() in ("1", "true", "yes")
+    return bool(os.getenv("REDIS_URL"))
+
+
 class Settings(BaseModel):
     # Support multiple common env var names for Mongo connection string
     mongo_uri: str = Field(
@@ -32,12 +42,10 @@ class Settings(BaseModel):
     vapid_private_key: str = Field(default_factory=lambda: os.getenv("VAPID_PRIVATE_KEY", ""))
     vapid_subject: str = Field(default_factory=lambda: os.getenv("VAPID_SUBJECT", "mailto:admin@example.com"))
 
-    # Kafka (optional, fail-open if disabled/unavailable)
-    kafka_enabled: bool = Field(default_factory=lambda: os.getenv("KAFKA_ENABLED", "false").lower() in ("1", "true", "yes"))
-    kafka_bootstrap: str = Field(default_factory=lambda: os.getenv("KAFKA_BOOTSTRAP", os.getenv("KAFKA_BOOTSTRAP_SERVERS", "")))
-    kafka_client_id: str = Field(default_factory=lambda: os.getenv("KAFKA_CLIENT_ID", "truematch-python"))
-    kafka_topic_prefix: str = Field(default_factory=lambda: os.getenv("KAFKA_TOPIC_PREFIX", "tm"))
-    kafka_group_id: str = Field(default_factory=lambda: os.getenv("KAFKA_GROUP_ID", "tm-readmodels"))
+    # Redis (caching + pub/sub)
+    redis_url: str = Field(default_factory=lambda: os.getenv("REDIS_URL", ""))
+    redis_pubsub_enabled: bool = Field(default_factory=_redis_pubsub_enabled_default)
+    redis_pubsub_prefix: str = Field(default_factory=lambda: os.getenv("REDIS_PUBSUB_PREFIX", os.getenv("KAFKA_TOPIC_PREFIX", "tm")))
 
     # Atlas Search
     atlas_search_enabled: bool = Field(default_factory=lambda: os.getenv("ATLAS_SEARCH_ENABLED", "false").lower() in ("1", "true", "yes"))

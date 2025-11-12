@@ -1902,7 +1902,7 @@ async def add_like(body: Dict):
     try:
         await local_cache.delete_prefix(f"likes:incoming:{to_user}")
         await local_cache.delete_prefix(f"likes:outgoing:{from_user}")
-        # Cross-instance invalidation via Kafka (best-effort)
+        # Cross-instance invalidation via Redis pub/sub (best-effort)
         await publish_invalidate(f"likes:incoming:{to_user}")
         await publish_invalidate(f"likes:outgoing:{from_user}")
     except Exception:

@@ -30,13 +30,11 @@ from .routers import (
     filters,
 )
 import asyncio
-import os
 
 from .routers.groups import warm_groups_cache
 from fastapi.middleware.gzip import GZipMiddleware
-from .config import get_settings
-from .kafka import start_consumer as kafka_start_consumer, stop as kafka_stop
-from .readmodels import kafka_event_handler
+from .redis_bus import start_consumer as redis_bus_start_consumer, stop as redis_bus_stop
+from .readmodels import event_stream_handler
 
 app = FastAPI(title="Truematch Python API", default_response_class=_DEFAULT_RESPONSE_CLS)
 settings = get_settings()
@@ -92,15 +90,15 @@ async def startup():
         await warm_groups_cache() 
     except Exception:
         pass
-    # Start Kafka consumer for read models (optional)
+    # Start Redis pub/sub listener for read models and cache invalidations (optional)
     try:
-        if get_settings().kafka_enabled:
-            await kafka_start_consumer(kafka_event_handler)
-            print("[Kafka] consumer started for read models")
+        if get_settings().redis_pubsub_enabled:
+            await redis_bus_start_consumer(event_stream_handler)
+            print("[Events] Redis pub/sub listener started")
         else:
-            print("[Kafka] disabled")
+            print("[Events] Redis pub/sub disabled")
     except Exception as e:
-        print(f"[Kafka] start failed (non-fatal): {e}")
+        print(f"[Events] listener start failed (non-fatal): {e}")
 
     # Cloudinary status log (non-fatal)
     try:
@@ -131,7 +129,7 @@ async def startup():
 async def shutdown():
     await close_mongo_connection()
     try:
-        await kafka_stop()
+        await redis_bus_stop()
     except Exception:
         pass
 
