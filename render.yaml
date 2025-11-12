@@ -6,6 +6,7 @@ services:
     autoDeploy: true
     healthCheckPath: /
     dockerfilePath: node-service/Dockerfile
+    dockerContext: node-service
     envVars:
       - key: NODE_ENV
         value: production
