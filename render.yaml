@@ -18,8 +18,6 @@ services:
         sync: false
       - key: REDIS_URL
         sync: false
-      - key: KAFKA_BROKERS
-        sync: false
       - key: CLOUDINARY_URL
         sync: false
 
@@ -40,13 +38,13 @@ services:
         sync: false
       - key: REDIS_URL
         sync: false
-      - key: KAFKA_BROKERS
-        sync: false
+      - key: REDIS_PUBSUB_PREFIX
+        value: tm
       - key: CLOUDINARY_URL
         sync: false
       - key: CORS_ORIGINS
         value: https://your-netlify-site.netlify.app
-# Optional background consumer if Kafka processing must run continuously
+# Optional background worker if separate event processing is required
 #workers:
 #  - type: worker
 #    name: truematch-python-consumer
