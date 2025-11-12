@@ -5,8 +5,7 @@ services:
     plan: starter
     autoDeploy: true
     healthCheckPath: /
-    rootDir: node-service
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: node-service/Dockerfile
     envVars:
       - key: NODE_ENV
         value: production
@@ -29,8 +28,7 @@ services:
     plan: starter
     autoDeploy: true
     healthCheckPath: /api/health/db
-    rootDir: python-service
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: python-service/Dockerfile
     envVars:
       - key: PORT
         value: "8000"
