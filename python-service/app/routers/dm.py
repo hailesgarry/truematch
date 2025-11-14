@@ -54,24 +54,31 @@ def _dm_participants(dm_id: str) -> List[str]:
 
 
 @router.get("/dm/{dm_id}/latest")
-async def dm_latest(dm_id: str, count: Optional[int] = 100, request: Request = None, response: Response = None) -> List[Dict]:
+async def dm_latest(
+    dm_id: str,
+    request: Request,
+    response: Response,
+    count: Optional[int] = 100,
+) -> List[Dict]:
     db = get_db()
     n = max(1, min(int(count or 100), 500))
     key = f"dm:latest:{dm_id}:{n}"
-    inm = request.headers.get("if-none-match") if request else None
+    try:
+        inm = request.headers.get("if-none-match")
+    except Exception:
+        inm = None
     hit = await local_cache.get(key)
     if hit is not None:
-        if response is not None:
-            try:
-                raw = json.dumps(hit, separators=(",", ":"), sort_keys=True)
-                response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
-                tag = _etag_for(raw)
-                response.headers["ETag"] = tag
-                if inm and inm == tag:
-                    response.status_code = 304
-                    return []
-            except Exception:
-                pass
+        try:
+            raw = json.dumps(hit, separators=(",", ":"), sort_keys=True)
+            response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
+            tag = _etag_for(raw)
+            response.headers["ETag"] = tag
+            if inm and inm == tag:
+                response.status_code = 304
+                return []
+        except Exception:
+            pass
         return hit
     cur = db[DM_MESSAGES_COLLECTION].find({"dmId": dm_id}).sort("createdAt", 1).limit(n)
     out: List[Dict] = []
@@ -87,13 +94,12 @@ async def dm_latest(dm_id: str, count: Optional[int] = 100, request: Request = N
                 doc["replyTo"] = enriched
         out.append(doc)
     await local_cache.set(key, out, ttl_seconds=15)
-    if response is not None:
-        try:
-            raw = json.dumps(out, separators=(",", ":"), sort_keys=True)
-            response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
-            response.headers["ETag"] = _etag_for(raw)
-        except Exception:
-            pass
+    try:
+        raw = json.dumps(out, separators=(",", ":"), sort_keys=True)
+        response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
+        response.headers["ETag"] = _etag_for(raw)
+    except Exception:
+        pass
     return out
 
 
@@ -281,7 +287,7 @@ async def dm_react(dm_id: str, message_id: str, body: Dict) -> Dict:
 
 
 @router.get("/dm/threads")
-async def dm_threads(user: str, request: Request = None, response: Response = None) -> Dict:
+async def dm_threads(user: str, request: Request, response: Response) -> Dict:
     """Return DM thread metadata for a user, including a lightweight preview message."""
     db = get_db()
     u = (user or "").strip().lower()
@@ -289,20 +295,22 @@ async def dm_threads(user: str, request: Request = None, response: Response = No
         return {"threads": []}
 
     key = f"dm:threads:{u}"
-    inm = request.headers.get("if-none-match") if request else None
+    try:
+        inm = request.headers.get("if-none-match")
+    except Exception:
+        inm = None
     hit = await local_cache.get(key)
     if hit is not None:
-        if response is not None:
-            try:
-                raw = json.dumps(hit, separators=(",", ":"), sort_keys=True)
-                response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
-                tag = _etag_for(raw)
-                response.headers["ETag"] = tag
-                if inm and inm == tag:
-                    response.status_code = 304
-                    return {}
-            except Exception:
-                pass
+        try:
+            raw = json.dumps(hit, separators=(",", ":"), sort_keys=True)
+            response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
+            tag = _etag_for(raw)
+            response.headers["ETag"] = tag
+            if inm and inm == tag:
+                response.status_code = 304
+                return {}
+        except Exception:
+            pass
         return hit
 
     # Fetch the latest message per DM (sorted newest first) so we can include previews.
@@ -351,40 +359,41 @@ async def dm_threads(user: str, request: Request = None, response: Response = No
 
     out = {"threads": threads}
     await local_cache.set(key, out, ttl_seconds=10)
-    if response is not None:
-        try:
-            raw = json.dumps(out, separators=(",", ":"), sort_keys=True)
-            response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
-            response.headers["ETag"] = _etag_for(raw)
-        except Exception:
-            pass
+    try:
+        raw = json.dumps(out, separators=(",", ":"), sort_keys=True)
+        response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
+        response.headers["ETag"] = _etag_for(raw)
+    except Exception:
+        pass
     return out
 
 @router.get("/dm/{dm_id}/page")
 async def dm_page(
     dm_id: str,
+    request: Request,
+    response: Response,
     before: Optional[int] = None,
     limit: Optional[int] = 50,
-    request: Request = None,
-    response: Response = None,
 ) -> Dict:
     db = get_db()
     n = max(1, min(int(limit or 50), 200))
     key = f"dm:page:{dm_id}:{n}:{int(before) if before is not None else 0}"
-    inm = request.headers.get("if-none-match") if request else None
+    try:
+        inm = request.headers.get("if-none-match")
+    except Exception:
+        inm = None
     hit = await local_cache.get(key)
     if hit is not None:
-        if response is not None:
-            try:
-                raw = json.dumps(hit, separators=(",", ":"), sort_keys=True)
-                response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
-                tag = _etag_for(raw)
-                response.headers["ETag"] = tag
-                if inm and inm == tag:
-                    response.status_code = 304
-                    return {}
-            except Exception:
-                pass
+        try:
+            raw = json.dumps(hit, separators=(",", ":"), sort_keys=True)
+            response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
+            tag = _etag_for(raw)
+            response.headers["ETag"] = tag
+            if inm and inm == tag:
+                response.status_code = 304
+                return {}
+        except Exception:
+            pass
         return hit
 
     projection = {
@@ -438,11 +447,10 @@ async def dm_page(
             next_before = oldest if older else None
     out = {"items": page, "nextBefore": next_before}
     await local_cache.set(key, out, ttl_seconds=10)
-    if response is not None:
-        try:
-            raw = json.dumps(out, separators=(",", ":"), sort_keys=True)
-            response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
-            response.headers["ETag"] = _etag_for(raw)
-        except Exception:
-            pass
+    try:
+        raw = json.dumps(out, separators=(",", ":"), sort_keys=True)
+        response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
+        response.headers["ETag"] = _etag_for(raw)
+    except Exception:
+        pass
     return out

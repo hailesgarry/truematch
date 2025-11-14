@@ -636,6 +636,10 @@ type LikesReceivedApiResponse = {
     username?: string | null;
     name?: string | null;
     avatar?: string | null;
+    profile_avatar?: string | null;
+    dating_photo?: string | null;
+    dating_photos?: string[] | null;
+    has_dating_profile?: boolean | null;
     liked_at?: number | string | null;
   }>;
 };
@@ -646,6 +650,10 @@ type MatchesApiResponse = {
     username?: string | null;
     name?: string | null;
     avatar?: string | null;
+    profile_avatar?: string | null;
+    dating_photo?: string | null;
+    dating_photos?: string[] | null;
+    has_dating_profile?: boolean | null;
     liked_at?: number | string | null;
     matched_at?: number | string | null;
   }>;
@@ -671,6 +679,10 @@ export type LikeSummary = {
   username?: string;
   name?: string;
   avatar?: string | null;
+  profileAvatar?: string | null;
+  datingPhoto?: string | null;
+  datingPhotos?: string[] | null;
+  hasDatingProfile?: boolean;
   likedAt?: number | null;
   matchedAt?: number | null;
 };
@@ -685,12 +697,38 @@ const normalizeLikeSummary = (raw: any): LikeSummary | null => {
   const likedAt = toEpochMillis(raw.liked_at);
   const matchedAt = toEpochMillis(raw.matched_at);
   const name = typeof raw.name === "string" ? raw.name.trim() : "";
-  const avatar = typeof raw.avatar === "string" ? raw.avatar.trim() : "";
+  const profileAvatarRaw =
+    typeof raw.profile_avatar === "string" ? raw.profile_avatar.trim() : "";
+  const legacyAvatarRaw =
+    typeof raw.avatar === "string" ? raw.avatar.trim() : "";
+  const datingPhotoRaw =
+    typeof raw.dating_photo === "string" ? raw.dating_photo.trim() : "";
+  const datingPhotosList: string[] = [];
+  if (Array.isArray(raw.dating_photos)) {
+    for (const entry of raw.dating_photos as unknown[]) {
+      if (typeof entry !== "string") continue;
+      const trimmed = entry.trim();
+      if (!trimmed || datingPhotosList.includes(trimmed)) continue;
+      datingPhotosList.push(trimmed);
+      if (datingPhotosList.length >= 12) break;
+    }
+  }
+  const resolvedDatingPhoto =
+    datingPhotoRaw || (datingPhotosList.length ? datingPhotosList[0] : "");
+  const hasDatingProfile =
+    typeof raw.has_dating_profile === "boolean"
+      ? raw.has_dating_profile
+      : undefined;
+  const profileAvatar = profileAvatarRaw || legacyAvatarRaw || "";
   return {
     userId: fallbackId,
     username: rawUsername || undefined,
     name: name || undefined,
-    avatar: avatar || null,
+    avatar: profileAvatar || null,
+    profileAvatar: profileAvatar || null,
+    datingPhoto: resolvedDatingPhoto || null,
+    datingPhotos: datingPhotosList.length ? datingPhotosList : null,
+    hasDatingProfile,
     likedAt: likedAt ?? null,
     matchedAt: matchedAt ?? null,
   };

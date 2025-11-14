@@ -19,7 +19,7 @@ const PageHeader: React.FC<PageHeaderProps> = ({
   onBack,
   right,
   position = "sticky",
-  heightClassName = "h-12",
+  heightClassName = "h-14",
   containerClassName = "max-w-md mx-auto",
   backIconSize = 24,
   backIcon,

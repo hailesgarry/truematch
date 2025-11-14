@@ -213,20 +213,19 @@ def _parse_timestamp_to_ms(value) -> Optional[int]:
 @router.get("/messages/{group_id}/latest")
 async def get_latest_messages(
     group_id: str,
+    request: Request,
+    response: Response,
     count: Optional[int] = 100,
-    request: Request = None,
-    response: Response = None,
 ) -> List[Dict[str, Any]]:
     """Return the most recent messages for a group ordered oldest -> newest."""
     db = get_db()
     n = max(1, min(int(count or 100), 500))
     cache_key = f"messages:latest:{group_id}:{n}"
     inm = None
-    if request is not None:
-        try:
-            inm = request.headers.get("if-none-match")
-        except Exception:
-            inm = None
+    try:
+        inm = request.headers.get("if-none-match")
+    except Exception:
+        inm = None
 
     cached = await local_cache.get(cache_key)
     if cached is None:
@@ -238,17 +237,16 @@ async def get_latest_messages(
             except Exception:
                 pass
     if cached is not None:
-        if response is not None:
-            try:
-                raw = json.dumps(cached, separators=(",", ":"), sort_keys=True)
-                response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
-                tag = _etag_for(raw)
-                response.headers["ETag"] = tag
-                if inm and inm == tag:
-                    response.status_code = 304
-                    return []
-            except Exception:
-                pass
+        try:
+            raw = json.dumps(cached, separators=(",", ":"), sort_keys=True)
+            response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
+            tag = _etag_for(raw)
+            response.headers["ETag"] = tag
+            if inm and inm == tag:
+                response.status_code = 304
+                return []
+        except Exception:
+            pass
         return cached
 
     items: List[Dict[str, Any]] = []
@@ -308,23 +306,22 @@ async def get_latest_messages(
     await local_cache.set(cache_key, enriched, ttl_seconds=LATEST_CACHE_TTL)
     await redis_cache_set(cache_key, enriched, ttl_seconds=LATEST_CACHE_TTL)
 
-    if response is not None:
-        try:
-            raw = json.dumps(enriched, separators=(",", ":"), sort_keys=True)
-            tag = _etag_for(raw)
-            response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
-            response.headers["ETag"] = tag
-            if inm and inm == tag:
-                response.status_code = 304
-                return []
-        except Exception:
-            pass
+    try:
+        raw = json.dumps(enriched, separators=(",", ":"), sort_keys=True)
+        tag = _etag_for(raw)
+        response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
+        response.headers["ETag"] = tag
+        if inm and inm == tag:
+            response.status_code = 304
+            return []
+    except Exception:
+        pass
 
     return enriched
 
 
 @router.get("/inbox/previews")
-async def inbox_previews(request: Request = None, response: Response = None) -> Dict:
+async def inbox_previews(request: Request, response: Response) -> Dict:
     """Return a compact list of latest message previews for many threads at once.
 
     Response shape: { previews: [{ threadId, username, text, kind, timestamp }, ...] }
@@ -336,7 +333,7 @@ async def inbox_previews(request: Request = None, response: Response = None) -> 
       # Optional: filter groups by joined ids from a header (CSV)
       joined_csv = None
       try:
-          joined_csv = request.headers.get("X-Joined-Groups") if request else None
+          joined_csv = request.headers.get("X-Joined-Groups")
       except Exception:
           joined_csv = None
       joined_ids = None
@@ -382,13 +379,12 @@ async def inbox_previews(request: Request = None, response: Response = None) -> 
     except Exception:
       pass
     # ETag for cache friendliness
-    if response is not None:
-        try:
-            raw = json.dumps({"previews": previews}, separators=(",", ":"), sort_keys=True)
-            response.headers["Cache-Control"] = "public, max-age=5, stale-while-revalidate=15"
-            response.headers["ETag"] = _etag_for(raw)
-        except Exception:
-            pass
+    try:
+        raw = json.dumps({"previews": previews}, separators=(",", ":"), sort_keys=True)
+        response.headers["Cache-Control"] = "public, max-age=5, stale-while-revalidate=15"
+        response.headers["ETag"] = _etag_for(raw)
+    except Exception:
+        pass
     # Cap total previews to avoid runaway payloads
     try:
         previews = previews[:1000]

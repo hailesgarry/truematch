@@ -76,7 +76,10 @@ export interface ProfileSocketSlice {
 }
 
 export interface DatingSocketSlice {
-  likeUser: (targetUsername: string) => void;
+  likeUser: (
+    targetUsername: string,
+    options?: { userId?: string | null; profile?: DatingProfile | null }
+  ) => void;
   unlikeUser: (targetUsername: string) => void;
   broadcastDatingProfileUpdate: (profile: DatingProfile) => void;
 }

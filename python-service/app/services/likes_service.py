@@ -1,11 +1,35 @@
 from datetime import datetime
-from typing import List, Tuple
+from typing import Any, List, Optional, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 
 from ..db.mongo import get_likes_collection
 from ..models.likes import LikedUser
+from ..services.dating_profile_service import resolve_primary_photo
+
+
+def _clean_str(value: Any) -> Optional[str]:
+    if isinstance(value, str):
+        trimmed = value.strip()
+        if trimmed:
+            return trimmed
+    return None
+
+
+def _clean_photo_list(value: Any, limit: int = 12) -> List[str]:
+    photos: List[str] = []
+    if isinstance(value, (list, tuple, set)):
+        for entry in value:
+            cleaned = _clean_str(entry)
+            if not cleaned:
+                continue
+            if cleaned in photos:
+                continue
+            photos.append(cleaned)
+            if len(photos) >= limit:
+                break
+    return photos
 
 
 async def is_reverse_like_exists(
@@ -114,7 +138,40 @@ async def get_likes_received(
             }
         },
         {"$unwind": {"path": "$profile", "preserveNullAndEmptyArrays": True}},
-        {"$addFields": {"liked_at": {"$toLong": "$created_at"}}},
+        {
+            "$lookup": {
+                "from": "dating_profiles",
+                "localField": "liker_id",
+                "foreignField": "userId",
+                "as": "dating_profile",
+            }
+        },
+        {"$unwind": {"path": "$dating_profile", "preserveNullAndEmptyArrays": True}},
+        {
+            "$addFields": {
+                "liked_at": {"$toLong": "$created_at"},
+                "dating_profile_photos": {
+                    "$cond": [
+                        {"$isArray": "$dating_profile.photos"},
+                        "$dating_profile.photos",
+                        [],
+                    ]
+                },
+                "legacy_profile_photos": {
+                    "$cond": [
+                        {"$isArray": "$profile.photos"},
+                        "$profile.photos",
+                        [],
+                    ]
+                },
+                "legacy_primary_photo": {
+                    "$ifNull": [
+                        "$profile.primaryPhotoUrl",
+                        {"$ifNull": ["$profile.photoUrl", "$profile.photo"]},
+                    ]
+                },
+            }
+        },
         {
             "$project": {
                 "user_id": "$liker_id",
@@ -123,22 +180,86 @@ async def get_likes_received(
                     "$ifNull": ["$profile.displayName", "$profile.username"]
                 },
                 "avatar": "$profile.avatarUrl",
+                "profile_avatar": "$profile.avatarUrl",
+                "dating_photo": {
+                    "$ifNull": [
+                        "$dating_profile.primaryPhotoUrl",
+                        {
+                            "$ifNull": [
+                                {"$arrayElemAt": ["$dating_profile_photos", 0]},
+                                {
+                                    "$ifNull": [
+                                        "$legacy_primary_photo",
+                                        {"$arrayElemAt": ["$legacy_profile_photos", 0]},
+                                    ]
+                                },
+                            ]
+                        },
+                    ]
+                },
+                "dating_photos": {
+                    "$cond": [
+                        {"$gt": [{"$size": "$dating_profile_photos"}, 0]},
+                        "$dating_profile_photos",
+                        "$legacy_profile_photos",
+                    ]
+                },
+                "has_dating_profile": {
+                    "$cond": [
+                        {
+                            "$or": [
+                                {"$eq": ["$dating_profile.isActive", True]},
+                                {"$ifNull": ["$dating_profile.primaryPhotoUrl", False]},
+                                {"$gt": [{"$size": "$dating_profile_photos"}, 0]},
+                            ]
+                        },
+                        True,
+                        False,
+                    ]
+                },
                 "liked_at": 1,
             }
         },
         {"$sort": {"liked_at": -1}},
     ]
     rows = await collection.aggregate(pipeline).to_list(length=None)
-    return [
-        LikedUser(
-            user_id=row.get("user_id"),
-            username=row.get("username"),
-            name=row.get("name"),
-            avatar=row.get("avatar"),
+
+    results: List[LikedUser] = []
+    for row in rows:
+        user_id = row.get("user_id")
+        if isinstance(user_id, str):
+            user_id = user_id.strip()
+
+        username = _clean_str(row.get("username")) or row.get("username")
+        name = _clean_str(row.get("name")) or row.get("name")
+
+        profile_avatar = _clean_str(row.get("profile_avatar") or row.get("avatar"))
+        dating_photos = _clean_photo_list(row.get("dating_photos"))
+        dating_photo = _clean_str(row.get("dating_photo"))
+        if not dating_photo:
+            dating_photo = resolve_primary_photo(
+                {
+                    "primaryPhotoUrl": row.get("dating_photo"),
+                    "photos": dating_photos,
+                }
+            )
+        if not dating_photo and dating_photos:
+            dating_photo = dating_photos[0]
+
+        liked_user = LikedUser(
+            user_id=user_id,
+            username=username,
+            name=name,
+            avatar=profile_avatar,
+            profile_avatar=profile_avatar,
+            dating_photo=dating_photo,
+            dating_photos=dating_photos or None,
+            has_dating_profile=bool(row.get("has_dating_profile")),
             liked_at=row.get("liked_at"),
         )
-        for row in rows
-    ]
+        results.append(liked_user)
+
+    return results
 
 
 async def get_matches(
@@ -178,9 +299,38 @@ async def get_matches(
         },
         {"$unwind": {"path": "$profile", "preserveNullAndEmptyArrays": True}},
         {
+            "$lookup": {
+                "from": "dating_profiles",
+                "localField": "liked_id",
+                "foreignField": "userId",
+                "as": "dating_profile",
+            }
+        },
+        {"$unwind": {"path": "$dating_profile", "preserveNullAndEmptyArrays": True}},
+        {
             "$addFields": {
                 "liked_at": {"$toLong": "$created_at"},
                 "reverse_like": {"$arrayElemAt": ["$reverse", 0]},
+                "dating_profile_photos": {
+                    "$cond": [
+                        {"$isArray": "$dating_profile.photos"},
+                        "$dating_profile.photos",
+                        [],
+                    ]
+                },
+                "legacy_profile_photos": {
+                    "$cond": [
+                        {"$isArray": "$profile.photos"},
+                        "$profile.photos",
+                        [],
+                    ]
+                },
+                "legacy_primary_photo": {
+                    "$ifNull": [
+                        "$profile.primaryPhotoUrl",
+                        {"$ifNull": ["$profile.photoUrl", "$profile.photo"]},
+                    ]
+                },
             }
         },
         {
@@ -218,6 +368,43 @@ async def get_matches(
                     "$ifNull": ["$profile.displayName", "$profile.username"]
                 },
                 "avatar": "$profile.avatarUrl",
+                "profile_avatar": "$profile.avatarUrl",
+                "dating_photo": {
+                    "$ifNull": [
+                        "$dating_profile.primaryPhotoUrl",
+                        {
+                            "$ifNull": [
+                                {"$arrayElemAt": ["$dating_profile_photos", 0]},
+                                {
+                                    "$ifNull": [
+                                        "$legacy_primary_photo",
+                                        {"$arrayElemAt": ["$legacy_profile_photos", 0]},
+                                    ]
+                                },
+                            ]
+                        },
+                    ]
+                },
+                "dating_photos": {
+                    "$cond": [
+                        {"$gt": [{"$size": "$dating_profile_photos"}, 0]},
+                        "$dating_profile_photos",
+                        "$legacy_profile_photos",
+                    ]
+                },
+                "has_dating_profile": {
+                    "$cond": [
+                        {
+                            "$or": [
+                                {"$eq": ["$dating_profile.isActive", True]},
+                                {"$ifNull": ["$dating_profile.primaryPhotoUrl", False]},
+                                {"$gt": [{"$size": "$dating_profile_photos"}, 0]},
+                            ]
+                        },
+                        True,
+                        False,
+                    ]
+                },
                 "liked_at": 1,
                 "matched_at": 1,
             }
@@ -225,17 +412,44 @@ async def get_matches(
         {"$sort": {"matched_at": -1, "liked_at": -1}},
     ]
     rows = await collection.aggregate(pipeline).to_list(length=None)
-    return [
-        LikedUser(
-            user_id=row.get("user_id"),
-            username=row.get("username"),
-            name=row.get("name"),
-            avatar=row.get("avatar"),
+
+    results: List[LikedUser] = []
+    for row in rows:
+        user_id = row.get("user_id")
+        if isinstance(user_id, str):
+            user_id = user_id.strip()
+
+        username = _clean_str(row.get("username")) or row.get("username")
+        name = _clean_str(row.get("name")) or row.get("name")
+
+        profile_avatar = _clean_str(row.get("profile_avatar") or row.get("avatar"))
+        dating_photos = _clean_photo_list(row.get("dating_photos"))
+        dating_photo = _clean_str(row.get("dating_photo"))
+        if not dating_photo:
+            dating_photo = resolve_primary_photo(
+                {
+                    "primaryPhotoUrl": row.get("dating_photo"),
+                    "photos": dating_photos,
+                }
+            )
+        if not dating_photo and dating_photos:
+            dating_photo = dating_photos[0]
+
+        liked_user = LikedUser(
+            user_id=user_id,
+            username=username,
+            name=name,
+            avatar=profile_avatar,
+            profile_avatar=profile_avatar,
+            dating_photo=dating_photo,
+            dating_photos=dating_photos or None,
+            has_dating_profile=bool(row.get("has_dating_profile")),
             liked_at=row.get("liked_at"),
             matched_at=row.get("matched_at"),
         )
-        for row in rows
-    ]
+        results.append(liked_user)
+
+    return results 
 
 
 __all__ = [
@@ -246,3 +460,4 @@ __all__ = [
     "is_reverse_like_exists",
     "check_match",
 ]
+ 

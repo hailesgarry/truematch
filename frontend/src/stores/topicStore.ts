@@ -56,66 +56,69 @@ function recomputeWinner(state: RoomTopicState): string | null {
 
 export const useTopicStore = create<TopicStore>()(
   persist(
-    (set, get) => ({
-      byGroup: {},
-      submitProposal: (groupId, text, authorId, authorName) =>
-        set((s) => {
-          const entry: RoomTopicState = s.byGroup[groupId] || {
-            proposals: [],
-            currentTopicId: null,
-          };
-          const proposal: Proposal = {
-            id: genId(),
-            text: text.trim(),
-            authorId,
-            authorName,
-            createdAt: new Date().toISOString(),
-            votes: {},
-          };
-          const next: RoomTopicState = {
-            ...entry,
-            proposals: [...entry.proposals, proposal],
-          };
-          next.currentTopicId = recomputeWinner(next);
-          return { byGroup: { ...s.byGroup, [groupId]: next } };
-        }),
-      voteExclusive: (groupId, proposalId, userId) =>
-        set((s) => {
-          const entry: RoomTopicState = s.byGroup[groupId] || {
-            proposals: [],
-            currentTopicId: null,
-          };
-          const proposals = entry.proposals.map((p) => {
-            // remove user's vote from all proposals
-            const nextVotes = { ...(p.votes || {}) };
-            delete nextVotes[userId];
-            // add vote only to the target
-            if (p.id === proposalId) {
-              nextVotes[userId] = true;
-            }
-            return { ...p, votes: nextVotes };
-          });
-          const next: RoomTopicState = { proposals, currentTopicId: null };
-          next.currentTopicId = recomputeWinner(next);
-          return { byGroup: { ...s.byGroup, [groupId]: next } };
-        }),
-      unvote: (groupId, proposalId, userId) =>
-        set((s) => {
-          const entry: RoomTopicState = s.byGroup[groupId] || {
-            proposals: [],
-            currentTopicId: null,
-          };
-          const proposals = entry.proposals.map((p) => {
-            if (p.id !== proposalId) return p;
-            const nextVotes = { ...(p.votes || {}) };
-            delete nextVotes[userId];
-            return { ...p, votes: nextVotes };
-          });
-          const next: RoomTopicState = { proposals, currentTopicId: null };
-          next.currentTopicId = recomputeWinner(next);
-          return { byGroup: { ...s.byGroup, [groupId]: next } };
-        }),
-    }),
+    (set, _get) => {
+      void _get;
+      return {
+        byGroup: {},
+        submitProposal: (groupId, text, authorId, authorName) =>
+          set((s) => {
+            const entry: RoomTopicState = s.byGroup[groupId] || {
+              proposals: [],
+              currentTopicId: null,
+            };
+            const proposal: Proposal = {
+              id: genId(),
+              text: text.trim(),
+              authorId,
+              authorName,
+              createdAt: new Date().toISOString(),
+              votes: {},
+            };
+            const next: RoomTopicState = {
+              ...entry,
+              proposals: [...entry.proposals, proposal],
+            };
+            next.currentTopicId = recomputeWinner(next);
+            return { byGroup: { ...s.byGroup, [groupId]: next } };
+          }),
+        voteExclusive: (groupId, proposalId, userId) =>
+          set((s) => {
+            const entry: RoomTopicState = s.byGroup[groupId] || {
+              proposals: [],
+              currentTopicId: null,
+            };
+            const proposals = entry.proposals.map((p) => {
+              // remove user's vote from all proposals
+              const nextVotes = { ...(p.votes || {}) };
+              delete nextVotes[userId];
+              // add vote only to the target
+              if (p.id === proposalId) {
+                nextVotes[userId] = true;
+              }
+              return { ...p, votes: nextVotes };
+            });
+            const next: RoomTopicState = { proposals, currentTopicId: null };
+            next.currentTopicId = recomputeWinner(next);
+            return { byGroup: { ...s.byGroup, [groupId]: next } };
+          }),
+        unvote: (groupId, proposalId, userId) =>
+          set((s) => {
+            const entry: RoomTopicState = s.byGroup[groupId] || {
+              proposals: [],
+              currentTopicId: null,
+            };
+            const proposals = entry.proposals.map((p) => {
+              if (p.id !== proposalId) return p;
+              const nextVotes = { ...(p.votes || {}) };
+              delete nextVotes[userId];
+              return { ...p, votes: nextVotes };
+            });
+            const next: RoomTopicState = { proposals, currentTopicId: null };
+            next.currentTopicId = recomputeWinner(next);
+            return { byGroup: { ...s.byGroup, [groupId]: next } };
+          }),
+      };
+    },
     { name: "chat-room-topics", partialize: (s) => ({ byGroup: s.byGroup }) }
   )
 );

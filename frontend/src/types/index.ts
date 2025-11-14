@@ -139,6 +139,8 @@ export interface DatingProfile {
 
   // Primary (legacy)
   photoUrl?: string | null;
+  primaryPhotoUrl?: string | null;
+  profileAvatarUrl?: string | null;
   photo?: string | null;
 
   // Basic profile

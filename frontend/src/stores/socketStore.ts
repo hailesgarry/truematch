@@ -5,6 +5,7 @@ import { useGroupStore } from "./groupStore";
 import { usePresenceStore } from "./presenceStore";
 import { useUiStore } from "./uiStore";
 import { useLikesStore } from "./likesStore";
+import type { DatingLikeProfile } from "./likesStore";
 // NEW:
 import { API_URL } from "../services/api";
 import { queryClient } from "../lib/queryClient";
@@ -386,7 +387,10 @@ export const useSocketStore = create<SocketState>()((set, get) => {
 
     // ----- Dating API ----
 
-    likeUser: (targetUsername: string) => {
+    likeUser: (
+      targetUsername: string,
+      options?: { userId?: string | null; profile?: DatingProfile | null }
+    ) => {
       const { socket, isConnected } = get();
       const { username } = useAuthStore.getState();
       const to = (targetUsername || "").trim();
@@ -394,7 +398,7 @@ export const useSocketStore = create<SocketState>()((set, get) => {
 
       if (!socket || !isConnected) {
         get().connect();
-        setTimeout(() => get().likeUser(targetUsername), 150);
+        setTimeout(() => get().likeUser(targetUsername, options), 150);
         return;
       }
       if (to.toLowerCase() === username.toLowerCase()) {
@@ -408,7 +412,67 @@ export const useSocketStore = create<SocketState>()((set, get) => {
 
       // Persist my outgoing like immediately
       try {
-        useLikesStore.getState().setOutgoing(to, true, Date.now());
+        const sourceProfile = options?.profile;
+        const normalizeString = (value: unknown): string =>
+          typeof value === "string" ? value.trim() : "";
+        const profileUserIdRaw = normalizeString(
+          options?.userId ?? sourceProfile?.userId ?? ""
+        );
+        const photosFromSource = Array.isArray(sourceProfile?.photos)
+          ? sourceProfile!.photos
+              .map((item) => normalizeString(item))
+              .filter((src) => src.length > 0)
+          : [];
+        const primaryPhoto =
+          normalizeString(sourceProfile?.primaryPhotoUrl) ||
+          normalizeString(sourceProfile?.photoUrl) ||
+          photosFromSource[0] ||
+          "";
+        const profileAvatar = normalizeString(
+          sourceProfile?.profileAvatarUrl ||
+            (photosFromSource.length ? photosFromSource[0] : "")
+        );
+        const photosList = Array.from(
+          new Set(
+            [primaryPhoto, ...photosFromSource]
+              .map((src) => src.trim())
+              .filter((src) => src.length > 0)
+          )
+        );
+        const profileHint: DatingLikeProfile | undefined = sourceProfile
+          ? {
+              username: normalizeString(sourceProfile.username) || to,
+              userId: profileUserIdRaw || null,
+              displayName:
+                sourceProfile.displayName ?? sourceProfile.firstName ?? null,
+              firstName: sourceProfile.firstName ?? null,
+              age:
+                typeof sourceProfile.age === "number"
+                  ? sourceProfile.age
+                  : undefined,
+              gender: sourceProfile.gender,
+              mood: sourceProfile.mood,
+              primaryPhotoUrl: primaryPhoto || null,
+              photoUrl: primaryPhoto || profileAvatar || null,
+              profileAvatarUrl: profileAvatar || null,
+              photos: photosList.length ? photosList : undefined,
+              hasDatingProfile: sourceProfile.hasDatingProfile ?? null,
+              location: sourceProfile.location
+                ? {
+                    city: sourceProfile.location.city,
+                    state: sourceProfile.location.state,
+                    formatted: sourceProfile.location.formatted,
+                  }
+                : undefined,
+            }
+          : options?.userId
+          ? {
+              username: to,
+              userId: profileUserIdRaw || null,
+            }
+          : undefined;
+
+        useLikesStore.getState().setOutgoing(to, true, Date.now(), profileHint);
       } catch {}
     },
 

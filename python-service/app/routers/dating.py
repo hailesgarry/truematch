@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Request, Response, Query
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from ..db import get_db
 from ..cache import cache as local_cache
@@ -11,7 +11,7 @@ import time
 from urllib.parse import urlparse
 from bson import ObjectId  # type: ignore
 from ..config import get_settings
-from .auth import get_current_profile
+from ..services.user_profile_service import get_current_profile
 
 def _etag_for(payload: str) -> str:
     return weak_etag(payload)
@@ -420,6 +420,7 @@ ALLOWED_UPSERT_FIELDS: Set[str] = {
     "photos",
     "photoPlacements",
     "photoUrl",
+    "primaryPhotoUrl",
     "photo",
     "mood",
     "age",
@@ -449,6 +450,7 @@ PROFILE_CLEAR_BASE_FIELDS: Tuple[str, ...] = (
     "photos",
     "photoPlacements",
     "photoUrl",
+    "primaryPhotoUrl",
     "photo",
     "mood",
     "gender",
@@ -669,6 +671,39 @@ def _normalize_photo_placements(
             continue
         placements[url] = section
     return placements
+
+
+def _extract_primary_photo(doc: Dict[str, Any]) -> Optional[str]:
+    if not isinstance(doc, dict):
+        return None
+    for key in ("primaryPhotoUrl", "photoUrl", "photo"):
+        candidate = doc.get(key)
+        if isinstance(candidate, str):
+            trimmed = candidate.strip()
+            if trimmed:
+                return trimmed
+    photos = doc.get("photos")
+    if isinstance(photos, (list, tuple)):
+        for entry in photos:
+            if not isinstance(entry, str):
+                continue
+            trimmed = entry.strip()
+            if trimmed:
+                return trimmed
+    return None
+
+
+def _apply_primary_photo_metadata(doc: Dict[str, Any]) -> None:
+    if not isinstance(doc, dict):
+        return
+    primary = _extract_primary_photo(doc)
+    if primary:
+        doc["primaryPhotoUrl"] = primary
+        existing_photo = doc.get("photoUrl")
+        if not isinstance(existing_photo, str) or not existing_photo.strip():
+            doc["photoUrl"] = primary
+    else:
+        doc["primaryPhotoUrl"] = None
 
 
 def _normalize_location(raw: Any) -> Optional[Dict[str, Any]]:
@@ -1304,6 +1339,7 @@ async def list_profiles(
                     d["matchBreakdown"] = breakdown
                     d["matchPercentage"] = breakdown.get("total")
 
+        _apply_primary_photo_metadata(d)
         d["hasDatingProfile"] = True
         filtered.append(d)
 
@@ -1315,10 +1351,10 @@ async def list_profiles(
 
 @router.get("/dating/profiles/batch")
 async def batch_profiles(
+    request: Request,
+    response: Response,
     users: str = "",
     ids: str = "",
-    request: Request = None,
-    response: Response = None,
 ) -> List[Dict]:
     name_entries = [u.strip() for u in (users or "").split(",") if u.strip()]
     id_entries = [i.strip() for i in (ids or "").split(",") if i.strip()]
@@ -1342,24 +1378,26 @@ async def batch_profiles(
     if id_set:
         key_parts.append("i:" + ",".join(sorted(id_set)))
     cache_key = f"profiles:batch:{'|'.join(key_parts)}"
-    inm = request.headers.get("if-none-match") if request else None
+    try:
+        inm = request.headers.get("if-none-match")
+    except Exception:
+        inm = None
 
     if cache_key:
         hit = await local_cache.get(cache_key)
     else:
         hit = None
     if hit is not None:
-        if response is not None:
-            try:
-                raw = json.dumps(hit, separators=(",", ":"), sort_keys=True)
-                response.headers["Cache-Control"] = "public, max-age=30, stale-while-revalidate=120"
-                tag = _etag_for(raw)
-                response.headers["ETag"] = tag
-                if inm and inm == tag:
-                    response.status_code = 304
-                    return []
-            except Exception:
-                pass
+        try:
+            raw = json.dumps(hit, separators=(",", ":"), sort_keys=True)
+            response.headers["Cache-Control"] = "public, max-age=30, stale-while-revalidate=120"
+            tag = _etag_for(raw)
+            response.headers["ETag"] = tag
+            if inm and inm == tag:
+                response.status_code = 304
+                return []
+        except Exception:
+            pass
         return hit
 
     db = get_db()
@@ -1381,6 +1419,7 @@ async def batch_profiles(
     id_lookup: Dict[str, Dict] = {}
 
     def _mark_visibility(doc: Dict[str, Any]) -> Dict[str, Any]:
+        _apply_primary_photo_metadata(doc)
         if _has_visible_dating_profile(doc):
             doc["hasDatingProfile"] = True
         else:
@@ -1442,13 +1481,12 @@ async def batch_profiles(
 
     if cache_key:
         await local_cache.set(cache_key, ordered_docs, ttl_seconds=30)
-    if response is not None:
-        try:
-            raw = json.dumps(ordered_docs, separators=(",", ":"), sort_keys=True)
-            response.headers["Cache-Control"] = "public, max-age=30, stale-while-revalidate=120"
-            response.headers["ETag"] = _etag_for(raw)
-        except Exception:
-            pass
+    try:
+        raw = json.dumps(ordered_docs, separators=(",", ":"), sort_keys=True)
+        response.headers["Cache-Control"] = "public, max-age=30, stale-while-revalidate=120"
+        response.headers["ETag"] = _etag_for(raw)
+    except Exception:
+        pass
     return ordered_docs
 
 @router.put("/dating/profile")
@@ -1624,7 +1662,11 @@ async def upsert_profile(payload: Dict[str, Any]) -> Dict:
                 for entry in raw_existing_photos
                 if isinstance(entry, str) and entry.strip()
             ]
-        if isinstance(existing_doc.get("photoUrl"), str):
+        if isinstance(existing_doc.get("primaryPhotoUrl"), str):
+            candidate = existing_doc.get("primaryPhotoUrl")
+            if isinstance(candidate, str) and candidate.strip():
+                existing_primary = candidate.strip()
+        if not existing_primary and isinstance(existing_doc.get("photoUrl"), str):
             candidate = existing_doc.get("photoUrl")
             if isinstance(candidate, str) and candidate.strip():
                 existing_primary = candidate.strip()
@@ -1673,9 +1715,51 @@ async def upsert_profile(payload: Dict[str, Any]) -> Dict:
         )
         body["photo"] = resolved_photo_field if resolved_photo_field else None
 
-    primary_current = None
-    if isinstance(body.get("photoUrl"), str):
-        primary_current = body.get("photoUrl").strip() or None
+    photos_list = body.get("photos") if isinstance(body.get("photos"), list) else None
+
+    primary_candidate: Optional[str] = None
+    explicit_primary_clear = False
+
+    if "photoUrl" in body:
+        candidate = body.get("photoUrl")
+        if isinstance(candidate, str):
+            trimmed = candidate.strip()
+            if trimmed:
+                primary_candidate = trimmed
+            else:
+                explicit_primary_clear = True
+        elif candidate is None:
+            explicit_primary_clear = True
+
+    if primary_candidate is None and "photo" in body:
+        candidate = body.get("photo")
+        if isinstance(candidate, str):
+            trimmed = candidate.strip()
+            if trimmed:
+                primary_candidate = trimmed
+            else:
+                explicit_primary_clear = True
+        elif candidate is None:
+            explicit_primary_clear = True
+
+    if primary_candidate is None and isinstance(photos_list, list):
+        for entry in photos_list:
+            if not isinstance(entry, str):
+                continue
+            trimmed = entry.strip()
+            if trimmed:
+                primary_candidate = trimmed
+                break
+        if photos_in_payload and not photos_list:
+            explicit_primary_clear = True
+
+    if primary_candidate is None and not explicit_primary_clear:
+        primary_candidate = existing_primary
+
+    if primary_candidate is not None or explicit_primary_clear:
+        body["primaryPhotoUrl"] = primary_candidate if primary_candidate else None
+
+    primary_current = primary_candidate
 
     if isinstance(body.get("photos"), list):
         filtered_photos: List[str] = []
@@ -1780,6 +1864,7 @@ async def upsert_profile(payload: Dict[str, Any]) -> Dict:
 
     doc = await db["profiles"].find_one({"username": username}) or {}
     doc.pop("_id", None)
+    _apply_primary_photo_metadata(doc)
     _synchronize_name_fields(doc)
 
     # Invalidate caches so new data is visible immediately
@@ -1864,10 +1949,17 @@ async def remove_profile_photo(username: str, url: str):
         seen.add(trimmed)
         photos.append(trimmed)
     update: Dict = {"photos": photos}
+    next_primary = photos[0] if photos else None
     if doc.get("photoUrl") == target_url:
-        update["photoUrl"] = photos[0] if photos else None
+        update["photoUrl"] = next_primary
     if doc.get("photo") == target_url:
-        update["photo"] = photos[0] if photos else None
+        update["photo"] = next_primary
+    if doc.get("primaryPhotoUrl") == target_url or (
+        doc.get("photoUrl") == target_url and "primaryPhotoUrl" not in update
+    ) or (
+        doc.get("photo") == target_url and "primaryPhotoUrl" not in update
+    ):
+        update["primaryPhotoUrl"] = next_primary
     placements_raw = doc.get("photoPlacements")
     if isinstance(placements_raw, dict):
         normalized_placements = _normalize_photo_placements(placements_raw, photos)
@@ -1879,6 +1971,7 @@ async def remove_profile_photo(username: str, url: str):
     await db["profiles"].update_one({"username": username}, {"$set": update})
     updated = await db["profiles"].find_one({"username": username})
     updated.pop("_id", None)
+    _apply_primary_photo_metadata(updated)
     return updated
 
 

@@ -90,7 +90,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ active }) => {
       className="fixed bottom-0 left-0 right-0 z-10 bg-white"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
-      <div className="max-w-md mx-auto h-12 px-3">
+      <div className="max-w-md mx-auto h-14 px-3">
         <div className="w-full">
           <div className="grid h-full grid-cols-5">
             {/* Home */}

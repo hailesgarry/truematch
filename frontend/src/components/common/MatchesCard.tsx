@@ -5,6 +5,7 @@ import {
 } from "react-circular-progressbar";
 import "react-circular-progressbar/dist/styles.css";
 import type { DatingProfile } from "../../types";
+import { collectDatingPhotos } from "../../utils/datingPhotos";
 
 type MatchesCardProps = {
   profiles: DatingProfile[];
@@ -54,29 +55,6 @@ const deriveExpiryWindow = (
   return { start, end };
 };
 
-const getPhotos = (profile: DatingProfile): string[] => {
-  const photoCandidates: string[] = [];
-  if (Array.isArray(profile?.photos)) {
-    photoCandidates.push(...profile.photos);
-  }
-  if (typeof profile?.photoUrl === "string") {
-    photoCandidates.push(profile.photoUrl);
-  }
-  if (typeof (profile as any)?.photo === "string") {
-    photoCandidates.push((profile as any).photo);
-  }
-  return Array.from(
-    new Set(
-      photoCandidates
-        .filter(
-          (src): src is string =>
-            typeof src === "string" && src.trim().length > 0
-        )
-        .map((src) => src.trim())
-    )
-  );
-};
-
 const MatchesCard: React.FC<MatchesCardProps> = ({
   profiles,
   onSelectProfile,
@@ -119,7 +97,7 @@ const MatchesCard: React.FC<MatchesCardProps> = ({
                 profile.displayName.trim()) ||
               username;
 
-            const photos = getPhotos(profile);
+            const photos = collectDatingPhotos(profile);
             const avatarSrc = photos[0] || PLACEHOLDER_IMAGE;
 
             const { start, end } = deriveExpiryWindow(profile);

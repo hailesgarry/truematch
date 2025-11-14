@@ -65,9 +65,15 @@ interface SwipeHistoryEntry {
   direction: "left" | "right";
 }
 
+type LikeMutationTarget = {
+  username: string;
+  userId?: string | null;
+  profile?: DatingProfile;
+};
+
 const DatingPage: React.FC = () => {
   const navigate = useNavigate();
-  const { joined, username, userId } = useAuthStore();
+  const { joined, username, userId, token } = useAuthStore();
   const { showToast } = useUiStore();
   const { ensureConnected, likeUser, unlikeUser } = useSocketStore();
   const qc = useQueryClient();
@@ -270,12 +276,21 @@ const DatingPage: React.FC = () => {
   // Optimistic like/unlike using React Query mutations
   const likeMut = useMutation({
     mutationKey: ["dating", "like"],
-    mutationFn: async (target: string) => {
+    mutationFn: async (target: LikeMutationTarget) => {
       // Socket handles server-side; simulate latency-friendly noop
-      likeUser(target);
-      if (username) {
+      const targetUsername = (target.username || "").trim();
+      if (targetUsername) {
+        likeUser(targetUsername, {
+          userId: target.userId,
+          profile: target.profile,
+        });
+      }
+      const authToken = typeof token === "string" ? token.trim() : "";
+      const targetUserId =
+        typeof target.userId === "string" ? target.userId.trim() : "";
+      if (authToken && targetUserId) {
         try {
-          await createDatingLike(username, target);
+          await createDatingLike(targetUserId, authToken);
         } catch (error) {
           console.warn("Failed to persist dating like", error);
         }
@@ -295,11 +310,17 @@ const DatingPage: React.FC = () => {
   });
   const unlikeMut = useMutation({
     mutationKey: ["dating", "unlike"],
-    mutationFn: async (target: string) => {
-      unlikeUser(target);
-      if (username) {
+    mutationFn: async (target: LikeMutationTarget) => {
+      const targetUsername = (target.username || "").trim();
+      if (targetUsername) {
+        unlikeUser(targetUsername);
+      }
+      const authToken = typeof token === "string" ? token.trim() : "";
+      const targetUserId =
+        typeof target.userId === "string" ? target.userId.trim() : "";
+      if (authToken && targetUserId) {
         try {
-          await deleteDatingLike(username, target);
+          await deleteDatingLike(targetUserId, authToken);
         } catch (error) {
           console.warn("Failed to remove dating like", error);
         }
@@ -320,9 +341,11 @@ const DatingPage: React.FC = () => {
 
   const handleLike = useCallback(
     (profile: DatingProfile) => {
-      const uname = profile?.username;
+      const uname = normalizeUsername(profile?.username);
       if (!uname) return;
-      likeMut.mutate(uname);
+      const targetUserId =
+        typeof profile?.userId === "string" ? profile.userId.trim() : null;
+      likeMut.mutate({ username: uname, userId: targetUserId, profile });
     },
     [likeMut]
   );
@@ -394,9 +417,13 @@ const DatingPage: React.FC = () => {
       resetDragState();
       updateCurrentIndex(last.index);
       if (last.direction === "right") {
-        const uname = last.profile?.username;
-        if (uname && uname.trim().length > 0) {
-          unlikeMut.mutate(uname);
+        const uname = normalizeUsername(last.profile?.username);
+        if (uname) {
+          const targetUserId =
+            typeof last.profile?.userId === "string"
+              ? last.profile.userId.trim()
+              : null;
+          unlikeMut.mutate({ username: uname, userId: targetUserId });
         }
       }
       return next;
@@ -512,7 +539,6 @@ const DatingPage: React.FC = () => {
         right={rewindButton}
         position="fixed"
         containerClassName="max-w-md mx-auto dating-page-header-inner"
-        heightClassName="h-12"
       />
       <div className="pt-14" style={{ paddingTop: headerPadding }}>
         <div className="mx-auto w-full max-w-md px-4">
@@ -716,7 +742,14 @@ const DatingPage: React.FC = () => {
                           }}
                           onUnlike={() => {
                             if (!uname) return;
-                            unlikeMut.mutate(uname);
+                            const targetUserId =
+                              typeof p.userId === "string"
+                                ? p.userId.trim()
+                                : null;
+                            unlikeMut.mutate({
+                              username: uname,
+                              userId: targetUserId,
+                            });
                           }}
                           onOpenProfile={() => {
                             const profileId = profileUserId;

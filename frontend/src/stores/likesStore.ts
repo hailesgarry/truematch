@@ -7,10 +7,13 @@ export type DatingLikeProfile = {
   gender?: string;
   mood?: string;
   photoUrl?: string | null;
+  primaryPhotoUrl?: string | null;
+  profileAvatarUrl?: string | null;
   photos?: string[];
   location?: { city?: string; state?: string; formatted?: string };
   displayName?: string | null;
   firstName?: string | null;
+  hasDatingProfile?: boolean | null;
 };
 
 export type LikeEntry = {
@@ -25,6 +28,10 @@ type IncomingReplaceItem = {
   username?: string | null;
   displayName?: string | null;
   avatar?: string | null;
+  profileAvatar?: string | null;
+  datingPhoto?: string | null;
+  datingPhotos?: string[] | null;
+  hasDatingProfile?: boolean | null;
   at?: number | null;
 };
 
@@ -77,15 +84,43 @@ const deriveKey = (
   return uname ? `name:${uname}` : "";
 };
 
-const mergePhotos = (
-  existing: string[] | undefined,
-  avatar?: string | null
-): string[] | undefined => {
-  const src = normalizeIdentifier(avatar);
-  if (!src) return existing;
-  const list = Array.isArray(existing) ? [...existing] : [];
-  if (!list.includes(src)) list.unshift(src);
-  return list.slice(0, 6);
+const sanitizePhoto = (value?: string | null): string | null => {
+  const trimmed = normalizeIdentifier(value);
+  return trimmed || null;
+};
+
+const collectPhotoCandidates = (
+  ...sources: Array<string | null | undefined | string[]>
+): string[] => {
+  const seen = new Set<string>();
+  const list: string[] = [];
+  const push = (input?: string | null) => {
+    const sanitized = sanitizePhoto(input);
+    if (!sanitized) return;
+    if (seen.has(sanitized)) return;
+    seen.add(sanitized);
+    list.push(sanitized);
+  };
+
+  for (const source of sources) {
+    if (Array.isArray(source)) {
+      for (const entry of source) push(entry);
+    } else {
+      push(source);
+    }
+    if (list.length >= 12) break;
+  }
+  return list;
+};
+
+const pickFirstPhoto = (
+  ...candidates: Array<string | null | undefined>
+): string | null => {
+  for (const candidate of candidates) {
+    const sanitized = sanitizePhoto(candidate);
+    if (sanitized) return sanitized;
+  }
+  return null;
 };
 
 const mergeProfile = (
@@ -95,6 +130,10 @@ const mergeProfile = (
     username: string;
     userId?: string | null;
     displayName?: string | null;
+    datingPhoto?: string | null;
+    datingPhotos?: string[] | null;
+    profileAvatar?: string | null;
+    hasDatingProfile?: boolean | null;
     avatar?: string | null;
   }
 ): DatingLikeProfile => {
@@ -117,12 +156,68 @@ const mergeProfile = (
       if (!base.firstName) base.firstName = display;
     }
   }
-  if (hints.avatar) {
-    base.photoUrl = hints.avatar;
-    base.photos = mergePhotos(base.photos, hints.avatar);
-  } else if (!base.photos && base.photoUrl) {
-    base.photos = [base.photoUrl];
+  const incomingPhotos = Array.isArray(incoming?.photos) ? incoming.photos : [];
+  const previousPhotos = Array.isArray(previous?.photos) ? previous.photos : [];
+  const hintedPhotos = Array.isArray(hints.datingPhotos)
+    ? hints.datingPhotos
+    : [];
+
+  const gallery = collectPhotoCandidates(
+    incoming?.primaryPhotoUrl,
+    incoming?.photoUrl,
+    incomingPhotos,
+    hints.datingPhoto,
+    hintedPhotos,
+    previous?.primaryPhotoUrl,
+    previous?.photoUrl,
+    previousPhotos
+  );
+
+  const profileAvatar =
+    sanitizePhoto(
+      incoming?.profileAvatarUrl ??
+        previous?.profileAvatarUrl ??
+        hints.profileAvatar ??
+        hints.avatar ??
+        null
+    ) || null;
+
+  const preferredPrimary = pickFirstPhoto(
+    incoming?.primaryPhotoUrl,
+    incoming?.photoUrl,
+    hints.datingPhoto,
+    gallery[0],
+    previous?.primaryPhotoUrl,
+    previous?.photoUrl
+  );
+
+  const primaryDatingPhoto = preferredPrimary;
+  let effectivePrimary = primaryDatingPhoto;
+  if (!effectivePrimary && gallery.length > 0) {
+    effectivePrimary = gallery[0];
   }
+  if (!effectivePrimary && profileAvatar) {
+    effectivePrimary = profileAvatar;
+  }
+
+  const mergedGallery = collectPhotoCandidates(
+    gallery,
+    profileAvatar && profileAvatar !== effectivePrimary ? [profileAvatar] : []
+  ).filter((src) => src !== effectivePrimary);
+
+  base.primaryPhotoUrl = primaryDatingPhoto || null;
+  base.profileAvatarUrl = profileAvatar ?? base.profileAvatarUrl ?? null;
+  base.photoUrl = effectivePrimary || null;
+  base.photos = mergedGallery.length ? mergedGallery.slice(0, 12) : undefined;
+  base.hasDatingProfile =
+    typeof hints.hasDatingProfile === "boolean"
+      ? hints.hasDatingProfile
+      : typeof incoming?.hasDatingProfile === "boolean"
+      ? incoming.hasDatingProfile
+      : typeof previous?.hasDatingProfile === "boolean"
+      ? previous.hasDatingProfile
+      : base.hasDatingProfile ?? undefined;
+
   return base;
 };
 
@@ -183,6 +278,10 @@ const normalizeIncomingItem = (
   at: number;
   displayName?: string | null;
   avatar?: string | null;
+  profileAvatar?: string | null;
+  datingPhoto?: string | null;
+  datingPhotos?: string[] | null;
+  hasDatingProfile?: boolean | null;
 } | null => {
   if (!item || typeof item !== "object") return null;
   const rawUsername =
@@ -210,13 +309,41 @@ const normalizeIncomingItem = (
     "avatar" in item && typeof item.avatar === "string"
       ? item.avatar
       : undefined;
+  const profileAvatar =
+    "profileAvatar" in item && typeof item.profileAvatar === "string"
+      ? item.profileAvatar
+      : avatar;
+  const datingPhoto =
+    "datingPhoto" in item && typeof item.datingPhoto === "string"
+      ? item.datingPhoto
+      : undefined;
+  const datingPhotos =
+    "datingPhotos" in item && Array.isArray(item.datingPhotos)
+      ? item.datingPhotos.filter(
+          (value): value is string => typeof value === "string"
+        )
+      : undefined;
+  const hasDatingProfile =
+    "hasDatingProfile" in item && typeof item.hasDatingProfile === "boolean"
+      ? item.hasDatingProfile
+      : undefined;
   return {
     key,
     userId: rawUserId || null,
     username: rawUsername || rawUserId || "",
     at: Number.isFinite(atValue) && atValue > 0 ? atValue : Date.now(),
     displayName: displayName ?? null,
-    avatar: avatar ?? null,
+    avatar: sanitizePhoto(avatar),
+    profileAvatar: sanitizePhoto(profileAvatar),
+    datingPhoto: sanitizePhoto(datingPhoto),
+    datingPhotos:
+      Array.isArray(datingPhotos) && datingPhotos.length
+        ? datingPhotos
+            .map((value) => sanitizePhoto(value))
+            .filter((value): value is string => Boolean(value))
+        : null,
+    hasDatingProfile:
+      typeof hasDatingProfile === "boolean" ? hasDatingProfile : null,
   };
 };
 
@@ -250,7 +377,14 @@ export const useLikesStore = create<LikesState>()((set) => ({
           username,
           userId: identifiers.userId,
           displayName: profile?.displayName ?? profile?.firstName ?? null,
+          datingPhoto: profile?.primaryPhotoUrl ?? profile?.photoUrl ?? null,
+          datingPhotos: Array.isArray(profile?.photos)
+            ? profile?.photos ?? []
+            : null,
+          profileAvatar: profile?.profileAvatarUrl ?? null,
+          hasDatingProfile: profile?.hasDatingProfile ?? null,
           avatar:
+            profile?.profileAvatarUrl ||
             profile?.photoUrl ||
             (Array.isArray(profile?.photos) ? profile.photos[0] : null),
         }
@@ -322,7 +456,11 @@ export const useLikesStore = create<LikesState>()((set) => ({
             username: entry.username,
             userId: entry.userId ?? prev?.userId ?? null,
             displayName: entry.displayName ?? null,
-            avatar: entry.avatar ?? null,
+            datingPhoto: entry.datingPhoto ?? null,
+            datingPhotos: entry.datingPhotos ?? null,
+            profileAvatar: entry.profileAvatar ?? null,
+            hasDatingProfile: entry.hasDatingProfile ?? null,
+            avatar: entry.profileAvatar ?? entry.avatar ?? null,
           }
         );
         const nextEntry: LikeEntry = {
@@ -371,19 +509,60 @@ export const useLikesStore = create<LikesState>()((set) => ({
   setOutgoing: (identifier, liked, at, profile) => {
     const username = normalizeIdentifier(identifier);
     if (!username) return;
-    const keyByName = deriveKey(null, username);
+    const usernameKey = deriveKey(null, username);
+    const hintedUserId = normalizeIdentifier(profile?.userId ?? null);
+    const idKey = hintedUserId ? deriveKey(hintedUserId, null) : "";
 
     set((state) => {
-      let key = keyByName;
-      let prev = state.byUser[key];
+      const map = { ...state.byUser };
+      let key = idKey || usernameKey;
+      if (!key) return state;
+
+      let prev: LikeEntry | undefined = map[key];
+      let prevKey = prev ? key : null;
+
+      if (!prev && idKey && map[idKey]) {
+        prev = map[idKey];
+        prevKey = idKey;
+        key = idKey;
+      }
+
+      if (!prev && usernameKey && map[usernameKey]) {
+        prev = map[usernameKey];
+        prevKey = usernameKey;
+        if (idKey) {
+          key = idKey;
+        } else {
+          key = usernameKey;
+        }
+      }
+
       if (!prev) {
-        for (const [candidateKey, value] of Object.entries(state.byUser)) {
+        for (const [candidateKey, value] of Object.entries(map)) {
           if (value.username.toLowerCase() === username.toLowerCase()) {
-            key = candidateKey;
             prev = value;
+            prevKey = candidateKey;
+            if (idKey) {
+              key = idKey;
+            } else {
+              key = candidateKey;
+            }
             break;
           }
         }
+      }
+
+      if (idKey && prevKey && prevKey !== idKey) {
+        const existingById = map[idKey];
+        if (existingById) {
+          prev = existingById;
+        } else if (prev) {
+          map[idKey] = prev;
+        }
+        if (prevKey && prevKey !== idKey) {
+          delete map[prevKey];
+        }
+        key = idKey;
       }
 
       const mergedProfile = mergeProfile(
@@ -391,24 +570,30 @@ export const useLikesStore = create<LikesState>()((set) => ({
         profile,
         {
           username,
-          userId: profile?.userId ?? prev?.userId ?? null,
+          userId: hintedUserId || prev?.userId || null,
           displayName: profile?.displayName ?? profile?.firstName ?? null,
+          datingPhoto: profile?.primaryPhotoUrl ?? profile?.photoUrl ?? null,
+          datingPhotos: Array.isArray(profile?.photos)
+            ? profile?.photos ?? []
+            : null,
+          profileAvatar: profile?.profileAvatarUrl ?? null,
+          hasDatingProfile: profile?.hasDatingProfile ?? null,
           avatar:
+            profile?.profileAvatarUrl ||
             profile?.photoUrl ||
             (Array.isArray(profile?.photos) ? profile.photos[0] : null),
         }
       );
 
       const nextEntry: LikeEntry = {
-        userId: profile?.userId ?? prev?.userId ?? null,
-        username: prev?.username || username,
+        userId: hintedUserId || prev?.userId || profile?.userId || null,
+        username: mergedProfile.username || prev?.username || username,
         incoming: prev?.incoming || null,
         outgoing: liked
           ? { at: at || Date.now(), profile: mergedProfile }
           : null,
       };
 
-      const map = { ...state.byUser };
       if (!nextEntry.incoming && !nextEntry.outgoing) {
         delete map[key];
       } else {

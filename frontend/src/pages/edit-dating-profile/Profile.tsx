@@ -25,7 +25,6 @@ import Field, { fieldControlClasses } from "../../components/ui/Field";
 import FullscreenOverlay from "../../components/ui/FullscreenOverlay";
 import SuccessToast from "../../components/ui/SuccessToast";
 import { useAuthStore } from "../../stores/authStore";
-import { useDatingStore } from "../../stores/datingStore";
 import { useSocketStore } from "../../stores/socketStore";
 import { useUiStore } from "../../stores/uiStore";
 import { fetchDatingProfile, saveDatingProfile } from "../../services/api";
@@ -99,12 +98,6 @@ type EditChildrenFormProps = {
 };
 
 type EditProfileHeadingFormProps = {
-  initialValue?: string | null;
-  onCancel: () => void;
-  onSave: (value: string) => void;
-};
-
-type EditAboutFormProps = {
   initialValue?: string | null;
   onCancel: () => void;
   onSave: (value: string) => void;
@@ -1042,50 +1035,6 @@ const EditProfileHeadingForm: React.FC<EditProfileHeadingFormProps> = ({
           onSecondary={onCancel}
           primaryText="Save"
           primaryDisabled={heading.trim().length === 0}
-        />
-      </div>
-    </form>
-  );
-};
-
-const EditAboutForm: React.FC<EditAboutFormProps> = ({
-  initialValue,
-  onCancel,
-  onSave,
-}) => {
-  const [about, setAbout] = useState<string>(initialValue?.trim() ?? "");
-
-  useEffect(() => {
-    setAbout(initialValue?.trim() ?? "");
-  }, [initialValue]);
-
-  const handleSubmit: React.FormEventHandler<HTMLFormElement> = (event) => {
-    event.preventDefault();
-    const normalized = about.trim();
-    if (!normalized) return;
-    onSave(normalized);
-  };
-
-  return (
-    <form className="flex h-full flex-col" onSubmit={handleSubmit}>
-      <div className="flex-1 space-y-6 overflow-y-auto pb-8">
-        <Field label="A little about yourself" htmlFor="profile-about-input">
-          <textarea
-            id="profile-about-input"
-            rows={4}
-            className={`${fieldControlClasses} resize-none`}
-            placeholder="Tell others a bit about you"
-            value={about}
-            onChange={(event) => setAbout(event.target.value)}
-          />
-        </Field>
-      </div>
-      <div className="mt-auto">
-        <ActionButtons
-          secondaryText="Cancel"
-          onSecondary={onCancel}
-          primaryText="Save"
-          primaryDisabled={about.trim().length === 0}
         />
       </div>
     </form>
@@ -3118,14 +3067,27 @@ const SectionGroup: React.FC<SectionGroupProps> = ({
   highlightKey,
 }) => (
   <motion.section
-    className={`relative mt-8 ${showTopDivider ? "" : "first:mt-0"}`}
+    className={`relative mt-8 ${showTopDivider ? "" : "first:mt-0"} ${
+      isHighlighted
+        ? "rounded-2xl ring-2 ring-pink-300 ring-offset-2 ring-offset-white"
+        : ""
+    }`}
     id={sectionId ? `section-${sectionId}` : undefined}
     data-section-id={sectionId}
+    data-highlight-key={highlightKey !== undefined ? highlightKey : undefined}
     tabIndex={sectionId ? -1 : undefined}
     layout
     initial={{ opacity: 0, y: 18 }}
-    animate={{ opacity: 1, y: 0 }}
-    transition={{ duration: 0.28, ease: "easeOut" }}
+    animate={{
+      opacity: 1,
+      y: 0,
+      scale: isHighlighted ? 1.02 : 1,
+    }}
+    transition={{
+      duration: 0.28,
+      ease: "easeOut",
+      ...(isHighlighted ? { type: "spring", stiffness: 220, damping: 18 } : {}),
+    }}
   >
     <div className="relative z-10">
       {showTopDivider && <div className="mb-6 h-px bg-gray-200" />}
@@ -3184,8 +3146,7 @@ const EditDatingProfileProfile: React.FC = () => {
     return value ? value.toLowerCase() : null;
   }, [location.search]);
   const focusSection = focusSectionFromState ?? focusSectionFromQuery ?? null;
-  const { username, userId, avatar } = useAuthStore();
-  const localDatingPhoto = useDatingStore((s) => s.profile.photo);
+  const { username, userId } = useAuthStore();
   const showToast = useUiStore((s) => s.showToast);
   const queryClient = useQueryClient();
   const broadcastDatingProfileUpdate = useSocketStore(
@@ -3222,7 +3183,6 @@ const EditDatingProfileProfile: React.FC = () => {
   const [profileHeadingDraft, setProfileHeadingDraft] = useState<string | null>(
     null
   );
-  const [aboutDraft, setAboutDraft] = useState<string | null>(null);
   const [lookingForDraft, setLookingForDraft] = useState<string | null>(null);
   const [favoriteMovieDraft, setFavoriteMovieDraft] = useState<string | null>(
     null
@@ -3426,26 +3386,6 @@ const EditDatingProfileProfile: React.FC = () => {
   );
 
   const countries = useMemo<ICountry[]>(() => Country.getAllCountries(), []);
-
-  const datingPhoto = useMemo(() => {
-    if (serverProfile) {
-      if (Array.isArray(serverProfile.photos)) {
-        const firstPhoto = serverProfile.photos.find(
-          (url): url is string =>
-            typeof url === "string" && url.trim().length > 0
-        );
-        if (firstPhoto) return firstPhoto;
-      }
-      if (serverProfile.photoUrl) return serverProfile.photoUrl;
-      if (serverProfile.photo) return serverProfile.photo;
-    }
-    return localDatingPhoto || null;
-  }, [serverProfile, localDatingPhoto]);
-
-  const displayPhoto = datingPhoto || avatar;
-  const photoAlt = datingPhoto
-    ? `${username || "User"} dating profile photo`
-    : `${username || "User"} avatar`;
 
   const livesInSelection = useMemo<LocationSelection | null>(() => {
     if (livesInDraft) return livesInDraft;
@@ -4054,9 +3994,6 @@ const EditDatingProfileProfile: React.FC = () => {
   }, [profileHeadingDraft, serverProfile]);
 
   const aboutValue = useMemo(() => {
-    if (aboutDraft !== null) {
-      return aboutDraft.trim();
-    }
     const possibleSources = serverProfile as unknown as {
       about?: string;
       aboutMe?: string;
@@ -4072,7 +4009,7 @@ const EditDatingProfileProfile: React.FC = () => {
       possibleSources?.summary ??
       "";
     return typeof value === "string" ? value.trim() : "";
-  }, [aboutDraft, serverProfile]);
+  }, [serverProfile]);
 
   const lookingForValue = useMemo(() => {
     if (lookingForDraft !== null) {
@@ -4125,8 +4062,11 @@ const EditDatingProfileProfile: React.FC = () => {
   }, [childrenSelection]);
 
   const myBio = useMemo(
-    () => [{ label: "Introduce yourself", value: profileHeadingValue }],
-    [profileHeadingValue]
+    () => [
+      { label: "Introduce yourself", value: profileHeadingValue },
+      { label: "About me", value: aboutValue },
+    ],
+    [profileHeadingValue, aboutValue]
   );
 
   const basics = useMemo(

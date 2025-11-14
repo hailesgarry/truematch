@@ -25,7 +25,29 @@ const mapIncoming = (items: LikeSummary[] | undefined) => {
         username,
         displayName:
           typeof item?.name === "string" ? item.name : rawUsername || null,
-        avatar: typeof item?.avatar === "string" ? item.avatar : null,
+        avatar:
+          typeof item?.profileAvatar === "string"
+            ? item.profileAvatar
+            : typeof item?.avatar === "string"
+            ? item.avatar
+            : null,
+        profileAvatar:
+          typeof item?.profileAvatar === "string"
+            ? item.profileAvatar
+            : typeof item?.avatar === "string"
+            ? item.avatar
+            : null,
+        datingPhoto:
+          typeof item?.datingPhoto === "string" ? item.datingPhoto : null,
+        datingPhotos: Array.isArray(item?.datingPhotos)
+          ? item.datingPhotos.filter(
+              (value): value is string => typeof value === "string"
+            )
+          : null,
+        hasDatingProfile:
+          typeof item?.hasDatingProfile === "boolean"
+            ? item.hasDatingProfile
+            : null,
         at: Number(item?.likedAt) || Date.now(),
       };
     })

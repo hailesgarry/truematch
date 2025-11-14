@@ -28,8 +28,9 @@ from .routers import (
     push,
     auth,
     filters,
+    likes,
+    user_profiles,
 )
-from .routes import likes_router
 import asyncio
 
 from .routers.groups import warm_groups_cache
@@ -145,7 +146,8 @@ app.include_router(indices.router, prefix="/api", tags=["admin"])
 app.include_router(push.router, prefix="/api", tags=["push"])
 app.include_router(auth.router, prefix="/api", tags=["auth"])
 app.include_router(filters.router, prefix="/api", tags=["message-filters"])
-app.include_router(likes_router, prefix="/api")
+app.include_router(user_profiles.router, prefix="/api")
+app.include_router(likes.router, prefix="/api")
 
 @app.get("/")
 async def root():

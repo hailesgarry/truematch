@@ -21,6 +21,7 @@ import { useDatingStore } from "../stores/datingStore";
 import LikeCard from "../components/common/LikeCard";
 import MatchesCard from "../components/common/MatchesCard";
 import type { DatingProfile } from "../types";
+import { collectDatingPhotos } from "../utils/datingPhotos";
 import LoadingSpinner from "../components/ui/LoadingSpinner";
 import ScrollRestoration, {
   type ScrollRestorationHandle,
@@ -42,12 +43,33 @@ type LikeListEntry = {
   profileHint: DatingLikeProfile | null;
   displayName?: string | null;
   avatar?: string | null;
+  profileAvatar?: string | null;
+  datingPhoto?: string | null;
+  datingPhotos?: string[] | null;
+  hasDatingProfile?: boolean | null;
 };
 
 const normalizeIdentifier = (value?: string | null): string => {
   if (typeof value !== "string") return "";
   const trimmed = value.trim();
   return trimmed;
+};
+
+const normalizeOptionalString = (value?: string | null): string | null => {
+  const normalized = normalizeIdentifier(value);
+  return normalized.length > 0 ? normalized : null;
+};
+
+const normalizePhotoList = (photos?: string[] | null): string[] | null => {
+  if (!Array.isArray(photos)) return null;
+  const normalized = Array.from(
+    new Set(
+      photos
+        .map((value) => normalizeIdentifier(value))
+        .filter((value) => value.length > 0)
+    )
+  );
+  return normalized.length > 0 ? normalized : null;
 };
 
 const normalizeUsernameKey = (value?: string | null): string => {
@@ -79,8 +101,16 @@ const profileFromHint = (
     : [];
   const photoUrlValue =
     typeof hint?.photoUrl === "string" ? hint.photoUrl.trim() : "";
+  const primaryHintValue =
+    typeof hint?.primaryPhotoUrl === "string"
+      ? hint.primaryPhotoUrl.trim()
+      : "";
   const photos = Array.from(
-    new Set([photoUrlValue, ...gallery].filter((src) => src && src.length > 0))
+    new Set(
+      [primaryHintValue, photoUrlValue, ...gallery].filter(
+        (src) => src && src.length > 0
+      )
+    )
   );
 
   const profile: DatingProfile = {
@@ -103,6 +133,9 @@ const profileFromHint = (
     if (hint.mood !== undefined) {
       profile.mood = hint.mood;
     }
+    if (hint.hasDatingProfile !== undefined) {
+      profile.hasDatingProfile = hint.hasDatingProfile ?? undefined;
+    }
     const loc = hint.location;
     if (loc) {
       profile.location = {
@@ -111,11 +144,24 @@ const profileFromHint = (
         formatted: loc.formatted,
       };
     }
+    if (typeof hint.profileAvatarUrl === "string") {
+      const avatarValue = hint.profileAvatarUrl.trim();
+      if (avatarValue) profile.profileAvatarUrl = avatarValue;
+    }
   }
 
   if (photos.length) {
     profile.photos = photos;
-    profile.photoUrl = photos[0];
+  }
+
+  const primaryPhoto = primaryHintValue || photos[0] || "";
+  if (primaryHintValue) {
+    profile.primaryPhotoUrl = primaryHintValue;
+  }
+  if (primaryPhoto) {
+    profile.photoUrl = primaryPhoto;
+  } else if (profile.profileAvatarUrl) {
+    profile.photoUrl = profile.profileAvatarUrl;
   } else if (photoUrlValue) {
     profile.photoUrl = photoUrlValue;
   }
@@ -142,9 +188,42 @@ const resolveProfileForEntry = (
     fallback.displayName = entry.displayName;
     if (!fallback.firstName) fallback.firstName = entry.displayName;
   }
-  if (entry.avatar) {
-    fallback.photoUrl = entry.avatar;
-    fallback.photos = [entry.avatar];
+  const profileAvatar =
+    normalizeOptionalString(entry.profileAvatar) ||
+    normalizeOptionalString(entry.avatar) ||
+    null;
+  const datingPhoto = normalizeOptionalString(entry.datingPhoto);
+  const datingPhotosList =
+    normalizePhotoList(entry.datingPhotos) ??
+    (datingPhoto ? [datingPhoto] : []);
+
+  if (profileAvatar) {
+    fallback.profileAvatarUrl = profileAvatar;
+  }
+  if (datingPhoto) {
+    fallback.primaryPhotoUrl = datingPhoto;
+    fallback.photoUrl = datingPhoto;
+  } else if (profileAvatar) {
+    fallback.photoUrl = profileAvatar;
+  }
+  const gallery = Array.from(
+    new Set(
+      [datingPhoto, ...datingPhotosList, profileAvatar]
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter((value) => value.length > 0)
+    )
+  );
+  if (gallery.length) {
+    fallback.photos = gallery;
+    if (!fallback.primaryPhotoUrl && datingPhoto) {
+      fallback.primaryPhotoUrl = datingPhoto;
+    }
+    if (!fallback.photoUrl) {
+      fallback.photoUrl = gallery[0];
+    }
+  }
+  if (entry.hasDatingProfile != null) {
+    fallback.hasDatingProfile = entry.hasDatingProfile ?? undefined;
   }
   return fallback;
 };
@@ -241,6 +320,13 @@ const MatchesPage: React.FC = () => {
       username: summary.username ?? summary.userId,
       displayName: summary.name ?? null,
       avatar: summary.avatar ?? null,
+      profileAvatar: summary.profileAvatar ?? null,
+      datingPhoto: summary.datingPhoto ?? null,
+      datingPhotos: summary.datingPhotos ?? null,
+      hasDatingProfile:
+        typeof summary.hasDatingProfile === "boolean"
+          ? summary.hasDatingProfile
+          : null,
       at: summary.likedAt ?? Date.now(),
     }));
     useLikesStore.getState().replaceIncoming(items);
@@ -327,9 +413,24 @@ const MatchesPage: React.FC = () => {
       profileHint?: DatingLikeProfile | null;
       displayName?: string | null;
       avatar?: string | null;
+      profileAvatar?: string | null;
+      datingPhoto?: string | null;
+      datingPhotos?: string[] | null;
+      hasDatingProfile?: boolean | null;
     }) => {
-      const key = deriveEntryKey(payload.userId, payload.username);
+      const idKey = deriveEntryKey(payload.userId, null);
+      const usernameKey = deriveEntryKey(null, payload.username);
+      let key = idKey || usernameKey;
       if (!key) return;
+      let existing = map.get(key);
+      if (!existing && idKey && usernameKey && map.has(usernameKey)) {
+        existing = map.get(usernameKey);
+        key = idKey;
+        map.delete(usernameKey);
+      } else if (!existing && usernameKey && idKey && map.has(idKey)) {
+        existing = map.get(idKey);
+        key = idKey;
+      }
       const username =
         normalizeIdentifier(payload.username) ||
         normalizeIdentifier(payload.userId);
@@ -340,7 +441,34 @@ const MatchesPage: React.FC = () => {
         payload.at > 0
           ? payload.at
           : Date.now();
-      const existing = map.get(key);
+      const payloadAvatar = normalizeOptionalString(payload.avatar);
+      const payloadProfileAvatar = normalizeOptionalString(
+        payload.profileAvatar
+      );
+      const payloadDatingPhoto = normalizeOptionalString(payload.datingPhoto);
+      const payloadDatingPhotos = normalizePhotoList(payload.datingPhotos);
+      const existingAvatar = normalizeOptionalString(existing?.avatar);
+      const existingProfileAvatar = normalizeOptionalString(
+        existing?.profileAvatar
+      );
+      const existingDatingPhoto = normalizeOptionalString(
+        existing?.datingPhoto
+      );
+      const existingDatingPhotos = normalizePhotoList(existing?.datingPhotos);
+      const avatar = payloadAvatar ?? existingAvatar ?? null;
+      const profileAvatar =
+        payloadProfileAvatar ??
+        existingProfileAvatar ??
+        payloadAvatar ??
+        existingAvatar ??
+        null;
+      const datingPhoto = payloadDatingPhoto ?? existingDatingPhoto ?? null;
+      const datingPhotos =
+        payloadDatingPhotos ??
+        existingDatingPhotos ??
+        (datingPhoto ? [datingPhoto] : null);
+      const hasDatingProfile =
+        payload.hasDatingProfile ?? existing?.hasDatingProfile ?? null;
       const entry: LikeListEntry = {
         key,
         userId: normalizeIdentifier(payload.userId) || null,
@@ -353,7 +481,11 @@ const MatchesPage: React.FC = () => {
             : existing?.matchedAt ?? null,
         profileHint: payload.profileHint ?? existing?.profileHint ?? null,
         displayName: payload.displayName ?? existing?.displayName ?? null,
-        avatar: payload.avatar ?? existing?.avatar ?? null,
+        avatar,
+        profileAvatar,
+        datingPhoto,
+        datingPhotos,
+        hasDatingProfile,
       };
       if (!existing || entry.at > existing.at) {
         map.set(key, entry);
@@ -363,7 +495,11 @@ const MatchesPage: React.FC = () => {
           matchedAt: entry.matchedAt ?? existing.matchedAt ?? null,
           profileHint: entry.profileHint ?? existing.profileHint ?? null,
           displayName: entry.displayName ?? existing.displayName ?? null,
-          avatar: entry.avatar ?? existing.avatar ?? null,
+          avatar,
+          profileAvatar,
+          datingPhoto,
+          datingPhotos,
+          hasDatingProfile,
         });
       }
     };
@@ -377,20 +513,33 @@ const MatchesPage: React.FC = () => {
         matchedAt: summary.matchedAt ?? null,
         displayName: summary.name ?? null,
         avatar: summary.avatar ?? null,
+        profileAvatar: summary.profileAvatar ?? null,
+        datingPhoto: summary.datingPhoto ?? null,
+        datingPhotos: summary.datingPhotos ?? null,
+        hasDatingProfile: summary.hasDatingProfile ?? null,
       });
     }
 
     for (const entry of Object.values(byUser)) {
       if (!entry?.incoming) continue;
       const hintProfile = entry.incoming.profile || null;
+      const hintProfileAvatar =
+        typeof hintProfile?.profileAvatarUrl === "string"
+          ? hintProfile.profileAvatarUrl
+          : null;
+      const hintPrimaryPhoto =
+        typeof hintProfile?.primaryPhotoUrl === "string"
+          ? hintProfile.primaryPhotoUrl
+          : null;
+      const hintDatingPhotos = Array.isArray(hintProfile?.photos)
+        ? hintProfile!.photos.filter(
+            (src): src is string => typeof src === "string"
+          )
+        : null;
       const photoFromHint =
+        hintPrimaryPhoto ||
         hintProfile?.photoUrl ||
-        (Array.isArray(hintProfile?.photos)
-          ? hintProfile.photos.find(
-              (src) => typeof src === "string" && src.trim().length > 0
-            )
-          : undefined) ||
-        null;
+        (hintDatingPhotos ? hintDatingPhotos[0] : null);
       upsert({
         userId: entry.userId ?? hintProfile?.userId ?? null,
         username:
@@ -407,6 +556,10 @@ const MatchesPage: React.FC = () => {
           entry.username ??
           null,
         avatar: photoFromHint,
+        profileAvatar: hintProfileAvatar ?? photoFromHint ?? null,
+        datingPhoto: hintPrimaryPhoto ?? photoFromHint ?? null,
+        datingPhotos: hintDatingPhotos,
+        hasDatingProfile: hintProfile?.hasDatingProfile ?? null,
       });
     }
 
@@ -424,9 +577,24 @@ const MatchesPage: React.FC = () => {
       profileHint?: DatingLikeProfile | null;
       displayName?: string | null;
       avatar?: string | null;
+      profileAvatar?: string | null;
+      datingPhoto?: string | null;
+      datingPhotos?: string[] | null;
+      hasDatingProfile?: boolean | null;
     }) => {
-      const key = deriveEntryKey(payload.userId, payload.username);
+      const idKey = deriveEntryKey(payload.userId, null);
+      const usernameKey = deriveEntryKey(null, payload.username);
+      let key = idKey || usernameKey;
       if (!key) return;
+      let existing = map.get(key);
+      if (!existing && idKey && usernameKey && map.has(usernameKey)) {
+        existing = map.get(usernameKey);
+        key = idKey;
+        map.delete(usernameKey);
+      } else if (!existing && usernameKey && idKey && map.has(idKey)) {
+        existing = map.get(idKey);
+        key = idKey;
+      }
       const username =
         normalizeIdentifier(payload.username) ||
         normalizeIdentifier(payload.userId);
@@ -442,7 +610,34 @@ const MatchesPage: React.FC = () => {
         Number.isFinite(payload.matchedAt)
           ? payload.matchedAt
           : null;
-      const existing = map.get(key);
+      const payloadAvatar = normalizeOptionalString(payload.avatar);
+      const payloadProfileAvatar = normalizeOptionalString(
+        payload.profileAvatar
+      );
+      const payloadDatingPhoto = normalizeOptionalString(payload.datingPhoto);
+      const payloadDatingPhotos = normalizePhotoList(payload.datingPhotos);
+      const existingAvatar = normalizeOptionalString(existing?.avatar);
+      const existingProfileAvatar = normalizeOptionalString(
+        existing?.profileAvatar
+      );
+      const existingDatingPhoto = normalizeOptionalString(
+        existing?.datingPhoto
+      );
+      const existingDatingPhotos = normalizePhotoList(existing?.datingPhotos);
+      const avatar = payloadAvatar ?? existingAvatar ?? null;
+      const profileAvatar =
+        payloadProfileAvatar ??
+        existingProfileAvatar ??
+        payloadAvatar ??
+        existingAvatar ??
+        null;
+      const datingPhoto = payloadDatingPhoto ?? existingDatingPhoto ?? null;
+      const datingPhotos =
+        payloadDatingPhotos ??
+        existingDatingPhotos ??
+        (datingPhoto ? [datingPhoto] : null);
+      const hasDatingProfile =
+        payload.hasDatingProfile ?? existing?.hasDatingProfile ?? null;
       const entry: LikeListEntry = {
         key,
         userId: normalizeIdentifier(payload.userId) || null,
@@ -451,7 +646,11 @@ const MatchesPage: React.FC = () => {
         matchedAt: matchedAt ?? existing?.matchedAt ?? null,
         profileHint: payload.profileHint ?? existing?.profileHint ?? null,
         displayName: payload.displayName ?? existing?.displayName ?? null,
-        avatar: payload.avatar ?? existing?.avatar ?? null,
+        avatar,
+        profileAvatar,
+        datingPhoto,
+        datingPhotos,
+        hasDatingProfile,
       };
       if (
         !existing ||
@@ -463,7 +662,11 @@ const MatchesPage: React.FC = () => {
           ...existing,
           profileHint: entry.profileHint ?? existing.profileHint ?? null,
           displayName: entry.displayName ?? existing.displayName ?? null,
-          avatar: entry.avatar ?? existing.avatar ?? null,
+          avatar,
+          profileAvatar,
+          datingPhoto,
+          datingPhotos,
+          hasDatingProfile,
         });
       }
     };
@@ -477,6 +680,10 @@ const MatchesPage: React.FC = () => {
         matchedAt: summary.matchedAt ?? summary.likedAt ?? null,
         displayName: summary.name ?? null,
         avatar: summary.avatar ?? null,
+        profileAvatar: summary.profileAvatar ?? null,
+        datingPhoto: summary.datingPhoto ?? null,
+        datingPhotos: summary.datingPhotos ?? null,
+        hasDatingProfile: summary.hasDatingProfile ?? null,
       });
     }
 
@@ -486,14 +693,23 @@ const MatchesPage: React.FC = () => {
       if (!incomingAt || !outgoingAt) continue;
       const hintProfile =
         entry?.incoming?.profile || entry?.outgoing?.profile || null;
+      const hintProfileAvatar =
+        typeof hintProfile?.profileAvatarUrl === "string"
+          ? hintProfile.profileAvatarUrl
+          : null;
+      const hintPrimaryPhoto =
+        typeof hintProfile?.primaryPhotoUrl === "string"
+          ? hintProfile.primaryPhotoUrl
+          : null;
+      const hintDatingPhotos = Array.isArray(hintProfile?.photos)
+        ? hintProfile!.photos.filter(
+            (src): src is string => typeof src === "string"
+          )
+        : null;
       const photoFromHint =
+        hintPrimaryPhoto ||
         hintProfile?.photoUrl ||
-        (Array.isArray(hintProfile?.photos)
-          ? hintProfile.photos.find(
-              (src) => typeof src === "string" && src.trim().length > 0
-            )
-          : undefined) ||
-        null;
+        (hintDatingPhotos ? hintDatingPhotos[0] : null);
       const matchTime = Math.max(incomingAt, outgoingAt);
       upsert({
         userId: entry.userId ?? hintProfile?.userId ?? null,
@@ -512,6 +728,10 @@ const MatchesPage: React.FC = () => {
           entry.username ??
           null,
         avatar: photoFromHint,
+        profileAvatar: hintProfileAvatar ?? photoFromHint ?? null,
+        datingPhoto: hintPrimaryPhoto ?? photoFromHint ?? null,
+        datingPhotos: hintDatingPhotos,
+        hasDatingProfile: hintProfile?.hasDatingProfile ?? null,
       });
     }
 
@@ -919,28 +1139,9 @@ const MatchesPage: React.FC = () => {
                         (typeof profile?.displayName === "string" &&
                           profile.displayName.trim()) ||
                         "";
-                      const photoCandidates: string[] = [];
-                      if (Array.isArray(profile?.photos)) {
-                        photoCandidates.push(...profile.photos);
-                      }
-                      if (typeof profile?.photoUrl === "string") {
-                        photoCandidates.push(profile.photoUrl);
-                      }
-                      if (typeof (profile as any)?.photo === "string") {
-                        photoCandidates.push((profile as any).photo);
-                      }
-                      const photosToUse = Array.from(
-                        new Set(
-                          photoCandidates
-                            .filter(
-                              (src): src is string =>
-                                typeof src === "string" && src.trim().length > 0
-                            )
-                            .map((src) => src.trim())
-                        )
-                      );
+                      const photosToUse = collectDatingPhotos(profile);
                       const imageForAvatar =
-                        photosToUse[0] || "/placeholder.jpg";
+                        photosToUse[0] ?? "/placeholder.jpg";
                       return (
                         <LikeCard
                           key={`liked-${name}-${index}`}
