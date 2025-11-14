@@ -17,7 +17,6 @@ import {
   useRouteError,
   type LoaderFunctionArgs,
 } from "react-router-dom";
-import FullscreenOverlay from "./components/ui/FullscreenOverlay";
 import { useUiStore } from "./stores/uiStore";
 import { useAuthStore } from "./stores/authStore";
 import queryClient from "./lib/queryClient";
@@ -100,7 +99,6 @@ const CreateRoomPage = lazy(() => import("./pages/CreateRoomPage"));
 const ChatPage = lazy(() => loadChatPage());
 const MatchesPage = lazy(() => import("./pages/MatchesPage"));
 const LikedMePage = lazy(() => import("./pages/LikedMePage"));
-const MyLikesPage = lazy(() => import("./pages/MyLikesPage"));
 const DirectMessages = lazy(() => import("./pages/DirectMessages"));
 const PrivateChatPage = lazy(() => import("./pages/PrivateChatPage"));
 const DatingPage = lazy(() => import("./pages/DatingPage"));
@@ -349,17 +347,9 @@ function RootLayout() {
       <RouteProgress />
       <RouteLoadingManager />
       <ScrollRestoration />
-      <FullscreenOverlay
-        isOpen
-        onClose={() => {}}
-        closeOnBackdrop={false}
-        showBackdrop={false}
-        overlayClassName="z-0"
-      >
-        <PageSuspense>
-          <Outlet />
-        </PageSuspense>
-      </FullscreenOverlay>
+      <PageSuspense>
+        <Outlet />
+      </PageSuspense>
     </>
   );
 }
@@ -618,15 +608,6 @@ const router = createBrowserRouter([
             element: (
               <PageSuspense>
                 <LikedMePage />
-              </PageSuspense>
-            ),
-          },
-          {
-            path: "matches/my-likes/:username",
-            loader: noopLoader,
-            element: (
-              <PageSuspense>
-                <MyLikesPage />
               </PageSuspense>
             ),
           },

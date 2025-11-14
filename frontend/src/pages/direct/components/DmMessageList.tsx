@@ -2,6 +2,7 @@ import React from "react";
 import type { Virtualizer } from "@tanstack/react-virtual";
 import type { Message } from "../../../types";
 import ChatBubble from "../../../components/chat/ChatBubble";
+import SwipeReplyWrapper from "../../../components/chat/SwipeReplyWrapper";
 import { MediaMessage } from "../../../components/common/MediaUpload";
 import MessageReactions from "../../../components/MessageReactions";
 import ChatSessionSection from "../../../components/chat/ChatSessionSection";
@@ -25,11 +26,8 @@ type DmMessageListProps = {
   keyFor: (message: Message) => string;
   getColorForMessage: (message: Message) => { bg: string; fg: string };
   openActionsFor: (message: Message) => void;
-  openReactionPicker: (message: Message) => void;
-  buildPressHandlers: (
-    message: Message,
-    openActions: () => void
-  ) => React.HTMLAttributes<HTMLElement>;
+  openModalFor?: (message: Message, anchor?: HTMLElement | null) => void;
+  onQuickReact: (message: Message) => void;
   scrollToReferenced: (reply: ReplyTarget) => void;
   handleVoiceNoteDuration: (message: Message, durationMs: number) => void;
   tokenizeTextWithGifs: (text: string) => React.ReactNode;
@@ -51,6 +49,7 @@ type DmMessageListProps = {
   isConnected: boolean;
   dmId?: string | null;
   onReactionCountClick?: (message: Message) => void;
+  onSwipeReply: (message: Message) => void;
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -146,8 +145,8 @@ const DmMessageList: React.FC<DmMessageListProps> = ({
   keyFor,
   getColorForMessage,
   openActionsFor,
-  openReactionPicker,
-  buildPressHandlers,
+  openModalFor,
+  onQuickReact,
   scrollToReferenced,
   handleVoiceNoteDuration,
   tokenizeTextWithGifs,
@@ -160,6 +159,7 @@ const DmMessageList: React.FC<DmMessageListProps> = ({
   isConnected,
   dmId,
   onReactionCountClick,
+  onSwipeReply,
 }) => {
   const listRef = React.useRef<HTMLDivElement>(null);
 
@@ -224,10 +224,10 @@ const DmMessageList: React.FC<DmMessageListProps> = ({
                 <img
                   src={avatar}
                   alt={`${message.username}'s avatar`}
-                  className="h-8 w-8 rounded-full"
+                  className="h-10 w-10 rounded-full"
                 />
               ) : (
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-300 text-xs font-bold text-gray-600">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-300 text-sm font-bold text-gray-600">
                   {initial}
                 </div>
               )}
@@ -251,48 +251,50 @@ const DmMessageList: React.FC<DmMessageListProps> = ({
               </div>
             ) : null}
 
-            <ChatBubble
-              message={message}
-              colors={colors}
-              openActionsFor={openActionsFor}
-              openReactionsFor={openReactionPicker}
-              buildPressHandlers={buildPressHandlers}
-              tokenizeTextWithGifs={tokenizeTextWithGifs}
-              MediaMessage={MediaMessage}
-              AnimatedMedia={AnimatedMedia}
-              currentUsername={username}
-              onReplyPreviewClick={(reply) =>
-                scrollToReferenced({
-                  username: reply.username,
-                  timestamp: reply.timestamp,
-                  messageId: (reply as any).messageId,
-                })
-              }
-              onVoiceNoteDuration={handleVoiceNoteDuration}
-              selfAudioAccent
-              audioOverrides={
-                message.username !== username
-                  ? {
-                      trackColor: "#d1d5db",
-                      progressColor: "#6b7280",
-                      buttonIconColor: "#6b7280",
-                    }
-                  : undefined
-              }
-              utils={{
-                isGifUrl,
-                isEmojiOnly,
-                isVideoUrl,
-                isImageUrl,
-                truncate,
-              }}
-            />
+            <SwipeReplyWrapper onReply={() => onSwipeReply(message)}>
+              <ChatBubble
+                message={message}
+                colors={colors}
+                openActionsFor={openActionsFor}
+                openModalFor={openModalFor}
+                onQuickReact={onQuickReact}
+                tokenizeTextWithGifs={tokenizeTextWithGifs}
+                MediaMessage={MediaMessage}
+                AnimatedMedia={AnimatedMedia}
+                currentUsername={username}
+                onReplyPreviewClick={(reply) =>
+                  scrollToReferenced({
+                    username: reply.username,
+                    timestamp: reply.timestamp,
+                    messageId: (reply as any).messageId,
+                  })
+                }
+                onVoiceNoteDuration={handleVoiceNoteDuration}
+                selfAudioAccent
+                audioOverrides={
+                  message.username !== username
+                    ? {
+                        trackColor: "#d1d5db",
+                        progressColor: "#6b7280",
+                        buttonIconColor: "#6b7280",
+                      }
+                    : undefined
+                }
+                utils={{
+                  isGifUrl,
+                  isEmojiOnly,
+                  isVideoUrl,
+                  isImageUrl,
+                  truncate,
+                }}
+              />
+            </SwipeReplyWrapper>
           </div>
         </div>
 
         <div className="flex">
           {message.username !== username && (
-            <div className="w-10 flex-shrink-0" aria-hidden="true" />
+            <div className="w-12 flex-shrink-0" aria-hidden="true" />
           )}
           <div
             className={`flex flex-1 ${
@@ -429,10 +431,10 @@ const DmMessageList: React.FC<DmMessageListProps> = ({
                       <img
                         src={avatar}
                         alt={`${message.username}'s avatar`}
-                        className="h-8 w-8 rounded-full"
+                        className="h-10 w-10 rounded-full"
                       />
                     ) : (
-                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-300 text-xs font-bold text-gray-600">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-300 text-sm font-bold text-gray-600">
                         {initial}
                       </div>
                     )}
@@ -460,48 +462,50 @@ const DmMessageList: React.FC<DmMessageListProps> = ({
                     </div>
                   ) : null}
 
-                  <ChatBubble
-                    message={message}
-                    colors={colors}
-                    openActionsFor={openActionsFor}
-                    openReactionsFor={openReactionPicker}
-                    buildPressHandlers={buildPressHandlers}
-                    tokenizeTextWithGifs={tokenizeTextWithGifs}
-                    MediaMessage={MediaMessage}
-                    AnimatedMedia={AnimatedMedia}
-                    currentUsername={username}
-                    onReplyPreviewClick={(reply) =>
-                      scrollToReferenced({
-                        username: reply.username,
-                        timestamp: reply.timestamp,
-                        messageId: (reply as any).messageId,
-                      })
-                    }
-                    onVoiceNoteDuration={handleVoiceNoteDuration}
-                    selfAudioAccent
-                    audioOverrides={
-                      message.username !== username
-                        ? {
-                            trackColor: "#d1d5db",
-                            progressColor: "#6b7280",
-                            buttonIconColor: "#6b7280",
-                          }
-                        : undefined
-                    }
-                    utils={{
-                      isGifUrl,
-                      isEmojiOnly,
-                      isVideoUrl,
-                      isImageUrl,
-                      truncate,
-                    }}
-                  />
+                  <SwipeReplyWrapper onReply={() => onSwipeReply(message)}>
+                    <ChatBubble
+                      message={message}
+                      colors={colors}
+                      openActionsFor={openActionsFor}
+                      openModalFor={openModalFor}
+                      onQuickReact={onQuickReact}
+                      tokenizeTextWithGifs={tokenizeTextWithGifs}
+                      MediaMessage={MediaMessage}
+                      AnimatedMedia={AnimatedMedia}
+                      currentUsername={username}
+                      onReplyPreviewClick={(reply) =>
+                        scrollToReferenced({
+                          username: reply.username,
+                          timestamp: reply.timestamp,
+                          messageId: (reply as any).messageId,
+                        })
+                      }
+                      onVoiceNoteDuration={handleVoiceNoteDuration}
+                      selfAudioAccent
+                      audioOverrides={
+                        message.username !== username
+                          ? {
+                              trackColor: "#d1d5db",
+                              progressColor: "#6b7280",
+                              buttonIconColor: "#6b7280",
+                            }
+                          : undefined
+                      }
+                      utils={{
+                        isGifUrl,
+                        isEmojiOnly,
+                        isVideoUrl,
+                        isImageUrl,
+                        truncate,
+                      }}
+                    />
+                  </SwipeReplyWrapper>
                 </div>
               </div>
 
               <div className="flex">
                 {message.username !== username && (
-                  <div className="w-10 flex-shrink-0" aria-hidden="true" />
+                  <div className="w-12 flex-shrink-0" aria-hidden="true" />
                 )}
                 <div
                   className={`flex flex-1 ${

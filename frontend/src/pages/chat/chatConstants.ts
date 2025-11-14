@@ -22,5 +22,5 @@ export const RECORDING_WAVEFORM_CAP = 480;
 export const RESPONSIVE_BUBBLE_WIDTH =
   "w-full max-w-full min-w-0 sm:max-w-[95%] md:max-w-[85%] lg:max-w-[72%] xl:max-w-[64%]";
 
-export const UNIFIED_BUBBLE_BG = "#e5e7eb"; // Tailwind gray-200
-export const UNIFIED_BUBBLE_FG = "#111827"; // Tailwind gray-900
+export const UNIFIED_BUBBLE_BG = "#f1f5f9"; // Tailwind slate-100
+export const UNIFIED_BUBBLE_FG = "#0f172a"; // Tailwind slate-900

@@ -30,15 +30,14 @@ import {
 import type { Message, ReactionEmoji } from "../types";
 // BottomSheet usage refactored into MessageActionSheet
 import MessageActionSheet from "../components/chat/MessageActionSheet";
+import MessageActionModal from "../components/chat/MessageActionModal";
 import FullscreenOverlay from "../components/ui/FullscreenOverlay";
 import "./ChatPage.css";
 // Bubble colors are now a single gray for all messages (generator removed)
-import Modal from "../components/common/Modal";
 import { useNotificationStore } from "../stores/notificationStore";
 import { useAvatarStore } from "../stores/avatarStore";
 import { useUiStore } from "../stores/uiStore";
 import { navigateToUserProfile } from "../lib/userIdentity";
-import DropDown from "../components/common/DropDown"; // Add this import at the top
 import SlidingHeader from "../components/common/SlidingHeader";
 import type { MediaPreviewMeta } from "../components/common/MediaUpload";
 import {
@@ -52,6 +51,7 @@ import GroupMessageList from "./chat/components/GroupMessageList";
 import FilteredUsersOverlay from "./chat/components/FilteredUsersOverlay";
 import { OverlaySuspenseFallback } from "./chat/asyncComponents";
 import ReactionDrawer from "../components/ReactionDrawer";
+import DropDown from "../components/common/DropDown";
 import EmojiPickerPage from "./EmojiPickerPage";
 import GifPickerPage from "./GifPickerPage";
 import {
@@ -139,10 +139,6 @@ const ChatPage: React.FC = () => {
   // NEW: overlay states
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [gifOpen, setGifOpen] = useState(false);
-  const [reactionPickerOpen, setReactionPickerOpen] = useState(false);
-  const [reactionPickerMessage, setReactionPickerMessage] =
-    useState<Message | null>(null);
-  const reactionFirstEmojiRef = useRef<HTMLElement>(null!);
 
   // REMOVE: editingMessage state (handled by union)
   // const [editingMessage, setEditingMessage] = useState<Message | null>(null);
@@ -836,27 +832,9 @@ const ChatPage: React.FC = () => {
   }
 
   const [uiState, dispatchUI] = useReducer(uiReducer, { kind: "idle" });
-
-  const openReactionPicker = useCallback((message: Message) => {
-    setReactionPickerMessage(message);
-    setReactionPickerOpen(true);
-  }, []);
-
-  const closeReactionPicker = useCallback(() => {
-    setReactionPickerOpen(false);
-    setReactionPickerMessage(null);
-  }, []);
-
-  const handleQuickReactionSelect = useCallback(
-    (emoji: ReactionEmoji) => {
-      if (!reactionPickerMessage) return;
-      try {
-        reactToMessage(reactionPickerMessage, emoji);
-      } finally {
-        closeReactionPicker();
-      }
-    },
-    [reactionPickerMessage, reactToMessage, closeReactionPicker]
+  const [actionModalOpen, setActionModalOpen] = useState(false);
+  const [actionAnchorRect, setActionAnchorRect] = useState<DOMRect | null>(
+    null
   );
 
   const handleReactionCountClick = useCallback((message: Message) => {
@@ -871,6 +849,12 @@ const ChatPage: React.FC = () => {
     uiState.kind === "sheet-actions" || uiState.kind === "sheet-confirm-delete"
       ? uiState.message
       : null;
+  const actionUiKind =
+    uiState.kind === "sheet-actions"
+      ? "actions"
+      : uiState.kind === "sheet-confirm-delete"
+      ? "confirm-delete"
+      : "idle";
   const editingMessage = uiState.kind === "editing" ? uiState.message : null;
 
   // Get pending sets from socket store
@@ -996,102 +980,106 @@ const ChatPage: React.FC = () => {
   // -------------------------
   // Handlers (updated)
   // -------------------------
-  const openActionsFor = (m: Message) => {
-    dispatchUI({ type: "OPEN_ACTIONS", message: m });
-  };
+  const closeSheet = useCallback(() => {
+    dispatchUI({ type: "CLOSE_SHEET" });
+  }, [dispatchUI]);
 
-  // Provide unified handlers: long-press on touch and right-click on desktop
-  const buildPressHandlers = (message: Message, openActions: () => void) => {
-    let timer: number | null = null;
-    let fired = false;
-    let suppressClick = false;
-    const PRESS_MS = 500;
-    const openReactions = () => {
-      openReactionPicker(message);
-    };
-    const clear = () => {
-      if (timer != null) {
-        window.clearTimeout(timer);
-        timer = null;
+  const openActionsFor = useCallback(
+    (m: Message) => {
+      dispatchUI({ type: "OPEN_ACTIONS", message: m });
+    },
+    [dispatchUI]
+  );
+
+  const closeAllActionSurfaces = useCallback(() => {
+    setActionModalOpen(false);
+    setActionAnchorRect(null);
+    closeSheet();
+  }, [closeSheet]);
+
+  const openActionModal = useCallback(
+    (m: Message, anchor?: HTMLElement | null) => {
+      dispatchUI({ type: "OPEN_ACTIONS", message: m });
+      let resolvedAnchor = anchor ?? null;
+      if (!resolvedAnchor) {
+        const guessedKey = keyFor(m);
+        resolvedAnchor = messageRefs.current.get(guessedKey) ?? null;
       }
-    };
-    return {
-      onTouchStart: () => {
-        fired = false;
-        suppressClick = false;
-        clear();
-        timer = window.setTimeout(() => {
-          fired = true;
-          openReactions();
-        }, PRESS_MS) as unknown as number;
-      },
-      onTouchMove: () => {
-        clear();
-      },
-      onTouchEnd: () => {
-        if (timer != null) clear();
-        if (fired) {
-          // prevent synthetic click after long press
-          suppressClick = true;
-          window.setTimeout(() => (suppressClick = false), 300);
-        }
-      },
-      onContextMenu: (e: React.MouseEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        suppressClick = true;
-        window.setTimeout(() => (suppressClick = false), 300);
-        openReactions();
-      },
-      onClick: (e: React.MouseEvent) => {
-        if (suppressClick || fired) {
-          e.preventDefault();
-          e.stopPropagation();
-          fired = false;
-          suppressClick = false;
-          return;
-        }
-        openActions();
-      },
-    } as React.HTMLAttributes<HTMLElement>;
-  };
+      setActionAnchorRect(
+        resolvedAnchor ? resolvedAnchor.getBoundingClientRect() : null
+      );
+      setActionModalOpen(true);
+    },
+    [dispatchUI, keyFor]
+  );
 
-  const closeSheet = () => dispatchUI({ type: "CLOSE_SHEET" });
+  const handleQuickReactionSelect = useCallback(
+    (emoji: ReactionEmoji) => {
+      if (!sheetMessage) {
+        return;
+      }
+      try {
+        reactToMessage(sheetMessage, emoji);
+      } finally {
+        closeAllActionSurfaces();
+      }
+    },
+    [sheetMessage, reactToMessage, closeAllActionSurfaces]
+  );
+
+  const handleQuickReact = useCallback(
+    (message: Message) => {
+      const emoji = QUICK_REACTION_EMOJIS[0] ?? "❤️";
+      try {
+        reactToMessage(message, emoji);
+      } catch {
+        // ignore reaction errors; the action sheet remains as a fallback
+      }
+    },
+    [reactToMessage]
+  );
 
   const handleDelete = () => {
     if (!sheetMessage || sheetMessage.username !== username) {
-      closeSheet();
+      closeAllActionSurfaces();
       return;
     }
     dispatchUI({ type: "OPEN_CONFIRM_DELETE" });
   };
 
-  const handleReply = () => {
-    if (sheetMessage) {
-      setReplyTarget(sheetMessage);
-      // Focus the composer after closing the sheet; defer so BottomSheet can animate out
-      setTimeout(() => {
+  const focusComposerForReply = useCallback(
+    (message: Message | null) => {
+      if (!message) return;
+      setReplyTarget(message);
+      window.setTimeout(() => {
         composerRef.current?.focusComposer();
       }, 50);
+    },
+    [setReplyTarget]
+  );
+
+  const handleReply = () => {
+    if (sheetMessage) {
+      focusComposerForReply(sheetMessage);
     }
-    closeSheet();
+    closeAllActionSurfaces();
   };
 
   // NEW: Mention handler — inserts "@username " at the caret and focuses input
   const handleMention = useCallback(() => {
     if (!sheetMessage) {
-      closeSheet();
+      closeAllActionSurfaces();
       return;
     }
     const target = sheetMessage.username?.trim();
     if (!target) {
-      closeSheet();
+      closeAllActionSurfaces();
       return;
     }
 
     composerRef.current?.insertMention(target);
-    closeSheet();
-  }, [sheetMessage, closeSheet]);
+    closeAllActionSurfaces();
+  }, [sheetMessage, closeAllActionSurfaces]);
 
   const handleQuickMention = useCallback((targetUsername: string) => {
     composerRef.current?.insertMention(targetUsername);
@@ -1109,7 +1097,7 @@ const ChatPage: React.FC = () => {
 
   const handleCopy = async () => {
     if (!sheetMessage) {
-      closeSheet();
+      closeAllActionSurfaces();
       return;
     }
 
@@ -1161,7 +1149,7 @@ const ChatPage: React.FC = () => {
         fallbackCopy();
       }
       showToast("Message copied", 1800, "success");
-      closeSheet();
+      closeAllActionSurfaces();
     } catch (err) {
       showToast("Unable to copy message", 2200, "error");
     }
@@ -1171,28 +1159,33 @@ const ChatPage: React.FC = () => {
     if (sheetMessage) {
       // Guard: disallow editing GIF-only or emoji-only messages
       if (isGifOnlyMessage(sheetMessage) || isEmojiOnly(sheetMessage.text)) {
-        closeSheet();
+        closeAllActionSurfaces();
         return;
       }
       dispatchUI({ type: "START_EDIT", message: sheetMessage });
       setMessageInput(sheetMessage.text, sheetMessage.text.length);
       setTimeout(() => composerRef.current?.focusComposer(), 40);
     }
-    closeSheet();
+    closeAllActionSurfaces();
   };
 
   const confirmDelete = () => {
     if (sheetMessage) {
       useSocketStore.getState().deleteMessage(sheetMessage);
     }
-    closeSheet();
+    closeAllActionSurfaces();
   };
 
   const cancelDeleteConfirmation = () => {
     if (sheetMessage) {
       dispatchUI({ type: "OPEN_ACTIONS", message: sheetMessage });
+      if (actionModalOpen) {
+        setActionModalOpen(true);
+      }
     } else {
       dispatchUI({ type: "CLOSE_SHEET" });
+      setActionModalOpen(false);
+      setActionAnchorRect(null);
     }
   };
 
@@ -1206,6 +1199,13 @@ const ChatPage: React.FC = () => {
   const cancelReplying = () => {
     clearReplyTarget();
   };
+
+  const handleSwipeReply = useCallback(
+    (message: Message) => {
+      focusComposerForReply(message);
+    },
+    [focusComposerForReply]
+  );
 
   const handleVoiceNoteDuration = React.useCallback(
     (msg: Message, durationMs: number) => {
@@ -1586,14 +1586,15 @@ const ChatPage: React.FC = () => {
         handleQuickMention={handleQuickMention}
         openFilterModal={openFilterModal}
         openActionsFor={openActionsFor}
-        openReactionPicker={openReactionPicker}
-        buildPressHandlers={buildPressHandlers}
+        openModalFor={openActionModal}
+        onQuickReact={handleQuickReact}
         scrollToReferenced={scrollToReferenced}
         handleVoiceNoteDuration={handleVoiceNoteDuration}
         resolveMediaOverlayMeta={resolveMediaOverlayMeta}
         onReactionCountClick={handleReactionCountClick}
         isConnected={isConnected}
         isEmojiOnly={isEmojiOnly}
+        onSwipeReply={handleSwipeReply}
       />
 
       <ComposerPanel
@@ -1623,17 +1624,11 @@ const ChatPage: React.FC = () => {
 
       {/* MessageActionSheet */}
       <MessageActionSheet
-        open={sheetOpen}
+        open={sheetOpen && !actionModalOpen}
         onClose={closeSheet}
         mode="group"
         username={username}
-        uiKind={
-          uiState.kind === "sheet-actions"
-            ? "actions"
-            : uiState.kind === "sheet-confirm-delete"
-            ? "confirm-delete"
-            : "idle"
-        }
+        uiKind={actionUiKind}
         message={sheetMessage}
         handlers={{
           onReply: handleReply,
@@ -1651,39 +1646,43 @@ const ChatPage: React.FC = () => {
         isGifUrl={isGifUrl}
         isVideoUrl={isVideoUrl}
         AnimatedMedia={AnimatedMedia}
+        quickReactions={{
+          emojis: QUICK_REACTION_EMOJIS,
+          onSelect: handleQuickReactionSelect,
+          disabled: !sheetMessage,
+        }}
       />
 
-      <Modal
-        isOpen={reactionPickerOpen}
-        onClose={closeReactionPicker}
-        centered
-        size="sm"
-        initialFocusRef={reactionFirstEmojiRef}
-        className="px-6 py-2"
-      >
-        <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-5">
-          {QUICK_REACTION_EMOJIS.map((emoji, index) => (
-            <button
-              key={emoji}
-              type="button"
-              ref={
-                index === 0
-                  ? (node) => {
-                      if (node) {
-                        reactionFirstEmojiRef.current = node;
-                      }
-                    }
-                  : undefined
-              }
-              className="h-12 w-12 rounded-full bg-gray-50 text-2xl leading-none shadow-sm transition hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
-              onClick={() => handleQuickReactionSelect(emoji)}
-              aria-label={`React ${emoji}`}
-            >
-              {emoji}
-            </button>
-          ))}
-        </div>
-      </Modal>
+      <MessageActionModal
+        open={actionModalOpen}
+        onClose={closeAllActionSurfaces}
+        mode="group"
+        username={username}
+        anchorRect={actionAnchorRect}
+        uiKind={actionUiKind}
+        message={sheetMessage}
+        handlers={{
+          onReply: handleReply,
+          onMention: handleMention,
+          onCopy: handleCopy,
+          onEdit: handleEdit,
+          onDelete: handleDelete,
+          onConfirmDelete: confirmDelete,
+          onCancelDelete: cancelDeleteConfirmation,
+        }}
+        editDisabled={editDisabled}
+        deleteDisabled={deleteDisabled}
+        editKindBlocked={editKindBlocked}
+        copyDisabled={copyDisabled}
+        isGifUrl={isGifUrl}
+        isVideoUrl={isVideoUrl}
+        AnimatedMedia={AnimatedMedia}
+        quickReactions={{
+          emojis: QUICK_REACTION_EMOJIS,
+          onSelect: handleQuickReactionSelect,
+          disabled: !sheetMessage,
+        }}
+      />
 
       {/* Reactions Drawer */}
       {reactionsOpen && (

@@ -84,7 +84,7 @@ const ReplyPreview: React.FC<ReplyPreviewProps> = ({
   const replyDeleted = Boolean(reply.deleted);
 
   const rootClass = [
-    "text-sm mb-1 px-2 py-1 rounded-md opacity-90 text-gray-500 cursor-pointer hover:opacity-100 focus:outline-none",
+    "text-sm mb-1 px-2 py-1 rounded-xl text-gray-600 cursor-pointer focus:outline-none",
     "flex flex-col gap-1",
     hasMediaPreview ? "items-end text-right ml-auto" : "items-start text-left",
   ].join(" ");
@@ -114,13 +114,11 @@ const ReplyPreview: React.FC<ReplyPreviewProps> = ({
       }}
       className={rootClass}
       style={{
-        background:
-          fgColorForBubble === "#ffffff"
-            ? "rgba(255,255,255,0.18)"
-            : "rgba(0,0,0,0.08)",
+        background: fgColorForBubble === "#ffffff" ? "#f8fafc" : "#e2e8f0",
+        border: "1px solid #cbd5f5",
       }}
     >
-      <div className="font-medium text-gray-900 leading-tight">
+      <div className="text-sm font-semibold text-gray-800 leading-tight">
         {reply.username}
       </div>
       <div>

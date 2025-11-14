@@ -59,6 +59,8 @@ export type DropDownProps = {
   groupName?: string | null;
   onOpenFilteredUsers?: () => void;
   offset?: DropDownOffset;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   openAnimation?:
     | "none"
     | "slide-from-top"
@@ -81,9 +83,29 @@ const DropDown: React.FC<DropDownProps> = ({
   groupName,
   onOpenFilteredUsers,
   offset,
+  open: controlledOpen,
+  onOpenChange,
   openAnimation = "none",
 }) => {
-  const [open, setOpen] = React.useState(false);
+  const [internalOpen, setInternalOpen] = React.useState(false);
+  const isControlled = typeof controlledOpen === "boolean";
+  const open = isControlled ? (controlledOpen as boolean) : internalOpen;
+  const setOpenState = React.useCallback(
+    (value: boolean | ((prev: boolean) => boolean)) => {
+      const previous = isControlled
+        ? (controlledOpen as boolean)
+        : internalOpen;
+      const nextValue =
+        typeof value === "function"
+          ? (value as (prev: boolean) => boolean)(previous)
+          : value;
+      if (!isControlled) {
+        setInternalOpen(nextValue);
+      }
+      onOpenChange?.(nextValue);
+    },
+    [controlledOpen, internalOpen, isControlled, onOpenChange]
+  );
   const wrapperRef = React.useRef<HTMLDivElement | null>(null);
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
   const menuRef = React.useRef<HTMLDivElement | null>(null);
@@ -92,7 +114,10 @@ const DropDown: React.FC<DropDownProps> = ({
   const [menuStyles, setMenuStyles] = React.useState<React.CSSProperties>({});
   const showToast = useUiStore((s) => s.showToast);
 
-  const closeMenu = React.useCallback(() => setOpen(false), []);
+  const closeMenu = React.useCallback(
+    () => setOpenState(false),
+    [setOpenState]
+  );
 
   const defaultItems: DropDownItem[] = React.useMemo(() => {
     if (!onLeaveRoom) return [];
@@ -528,7 +553,7 @@ const DropDown: React.FC<DropDownProps> = ({
 
   const handleToggle = () => {
     if (disabled) return;
-    setOpen((prev) => !prev);
+    setOpenState((prev) => !prev);
   };
 
   return (

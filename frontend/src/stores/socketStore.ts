@@ -6,7 +6,7 @@ import { usePresenceStore } from "./presenceStore";
 import { useUiStore } from "./uiStore";
 import { useLikesStore } from "./likesStore";
 // NEW:
-import { fetchProfilesByUsernames, API_URL } from "../services/api";
+import { API_URL } from "../services/api";
 import { queryClient } from "../lib/queryClient";
 import { datingProfilesKey } from "../hooks/useDatingProfilesQuery";
 import { broadcastMessage } from "../lib/broadcast";
@@ -406,27 +406,9 @@ export const useSocketStore = create<SocketState>()((set, get) => {
 
       socket.emit("dating:like", { to });
 
-      // Persist my outgoing like immediately and hydrate with real profile
+      // Persist my outgoing like immediately
       try {
         useLikesStore.getState().setOutgoing(to, true, Date.now());
-        // Fetch the real profile and store for My Likes (no 404s)
-        fetchProfilesByUsernames([to])
-          .then((arr) => {
-            const p = (arr && arr[0]) as any;
-            if (!p) return;
-            useLikesStore.getState().setOutgoingProfile(p.username || to, {
-              username: p.username,
-              age: p.age,
-              gender: p.gender,
-              mood: p.mood,
-              photoUrl:
-                (Array.isArray(p.photos) && p.photos[0]) || p.photoUrl || null,
-              location: p.location || undefined,
-            });
-          })
-          .catch(() => {
-            // ignore fetch errors; card will hydrate via batch later
-          });
       } catch {}
     },
 

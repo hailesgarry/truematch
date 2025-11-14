@@ -1,4 +1,5 @@
 import React from "react";
+import { useTapGesture } from "../../hooks/useTapGesture";
 import {
   DownloadSimple,
   Images,
@@ -18,12 +19,6 @@ import { useMessageStore } from "../../stores/messageStore";
 import LoadingSpinner from "../ui/LoadingSpinner";
 import { useCachedMediaBlob } from "../../hooks/useCachedMediaBlob";
 import RelativeTime from "./RelativeTime";
-
-// Utility: detect touch-capable device
-const isTouchDevice = () =>
-  (typeof window !== "undefined" &&
-    ("ontouchstart" in window || navigator.maxTouchPoints > 0)) ||
-  false;
 
 const OVERLAY_MEDIA_WIDTH = "w-screen max-w-[100vw] min-w-0";
 const OVERLAY_MEDIA_HEIGHT = "max-h-screen";
@@ -496,6 +491,7 @@ type MediaMessageProps = {
   replyMode?: boolean; // shrink when inside a reply bubble
   className?: string;
   onLongPress?: () => void; // open BottomSheet
+  onDoubleTap?: (anchor?: HTMLElement | null) => void; // open reaction modal
   overlayMeta?: MediaPreviewMeta;
 };
 
@@ -504,6 +500,7 @@ export const MediaMessage = React.memo(function MediaMessage({
   replyMode,
   className,
   onLongPress,
+  onDoubleTap,
   overlayMeta,
 }: MediaMessageProps) {
   const baseWidth =
@@ -646,11 +643,10 @@ export const MediaMessage = React.memo(function MediaMessage({
   const [modalVideoReady, setModalVideoReady] = React.useState(false);
 
   const [previewOpen, setPreviewOpen] = React.useState(false);
-  const touch = isTouchDevice();
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
   const [isPlaying, setIsPlaying] = React.useState(false);
   const [isMuted, setIsMuted] = React.useState(true);
-  const suppressClickFromTouchRef = React.useRef(false);
   // Modal preview video controls
   const modalVideoRef = React.useRef<HTMLVideoElement | null>(null);
   const [modalPlaying, setModalPlaying] = React.useState(false);
@@ -970,63 +966,20 @@ export const MediaMessage = React.memo(function MediaMessage({
     };
   }, [previewOpen]);
 
-  // Detect long-press for touch
-  const pressTimerRef = React.useRef<number | null>(null);
-  const longPressFiredRef = React.useRef(false);
-  const PRESS_MS = 400;
-
-  const clearPress = () => {
-    if (pressTimerRef.current) {
-      window.clearTimeout(pressTimerRef.current);
-      pressTimerRef.current = null;
-    }
-    longPressFiredRef.current = false;
-  };
-
-  const onTouchStart = () => {
-    clearPress();
-    pressTimerRef.current = window.setTimeout(() => {
-      longPressFiredRef.current = true;
-      onLongPress?.();
-    }, PRESS_MS) as unknown as number;
-  };
-  const onTouchEnd = () => {
-    if (!longPressFiredRef.current) {
-      // treat as tap
-      openPreview();
-    }
-    // prevent the subsequent synthetic click from toggling again
-    suppressClickFromTouchRef.current = true;
-    window.setTimeout(() => {
-      suppressClickFromTouchRef.current = false;
-    }, 350);
-    clearPress();
-  };
-  const onTouchMove = () => {
-    // cancel on move to avoid accidental long-press while scrolling
-    clearPress();
-  };
-
-  const rootProps = touch
-    ? {
-        onTouchStart,
-        onTouchEnd,
-        onTouchMove,
-        onContextMenu: (e: React.MouseEvent) => {
-          // Fallback: some mobile browsers fire contextmenu; treat as actions
-          e.preventDefault();
-          e.stopPropagation();
-          onLongPress?.();
-        },
-      }
-    : {
-        onClick: () => openPreview(),
-        onContextMenu: (e: React.MouseEvent) => {
-          e.preventDefault();
-          e.stopPropagation();
-          onLongPress?.();
-        },
-      };
+  const gestureHandlers = useTapGesture({
+    onSingleTap: () => openPreview(),
+    onDoubleTap: () => {
+      if (onDoubleTap) onDoubleTap(containerRef.current ?? null);
+      else onLongPress?.();
+    },
+    onLongPress: () => onLongPress?.(),
+    doubleTapMs: 250,
+    longPressMsTouch: 450,
+    longPressMsMouse: 650,
+    moveTolerancePx: 10,
+    stopPropagation: true,
+    preventDefault: false,
+  });
 
   // Ensure videos start paused; users must click to play
   React.useEffect(() => {
@@ -1278,16 +1231,16 @@ export const MediaMessage = React.memo(function MediaMessage({
 
   return (
     <>
-      <div className={rootClasses} {...rootProps} style={aspectStyle}>
+      <div
+        className={rootClasses}
+        {...gestureHandlers}
+        style={aspectStyle}
+        ref={containerRef}
+      >
         {isVideo ? (
           <div
             className="relative block w-full select-none bg-black"
             style={aspectStyle}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (suppressClickFromTouchRef.current) return;
-              openPreview();
-            }}
             onContextMenu={(e) => {
               e.preventDefault();
               e.stopPropagation();

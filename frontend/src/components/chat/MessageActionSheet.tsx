@@ -9,7 +9,7 @@ import {
   Flag,
   Microphone,
 } from "@phosphor-icons/react";
-import type { Message } from "../../types";
+import type { Message, ReactionEmoji } from "../../types";
 import { useAudioDuration } from "../../hooks/useAudioDuration";
 import { formatDuration } from "../../utils/formatDuration";
 
@@ -46,6 +46,11 @@ type Props = {
       preview?: string;
     };
   }>;
+  quickReactions?: {
+    emojis: ReactionEmoji[];
+    onSelect: (emoji: ReactionEmoji) => void;
+    disabled?: boolean;
+  };
 };
 
 const MessageActionSheet: React.FC<Props> = ({
@@ -63,6 +68,7 @@ const MessageActionSheet: React.FC<Props> = ({
   isGifUrl,
   isVideoUrl,
   AnimatedMedia,
+  quickReactions,
 }) => {
   // Remove the sheet title entirely for a cleaner look
   const title = undefined;
@@ -107,9 +113,36 @@ const MessageActionSheet: React.FC<Props> = ({
     >
       {message && uiKind === "actions" && (
         <div className="space-y-2" key="actions">
+          {quickReactions && quickReactions.emojis.length > 0 && (
+            <div className="flex flex-wrap items-center justify-center gap-3 pb-2 mb-1 border-b border-gray-100">
+              {quickReactions.emojis.map((emoji, index) => {
+                const disabled = quickReactions.disabled;
+                return (
+                  <button
+                    key={`${emoji}-${index}`}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => {
+                      if (disabled) return;
+                      quickReactions.onSelect(emoji);
+                    }}
+                    className={`h-12 w-12 rounded-full bg-gray-50 text-2xl leading-none shadow-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 ${
+                      disabled
+                        ? "opacity-50 cursor-not-allowed"
+                        : "hover:bg-gray-100"
+                    }`}
+                    aria-label={`React ${emoji}`}
+                  >
+                    {emoji}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           <button
             onClick={handlers.onReply}
-            className="w-full text-left py-2.5 text-sm flex items-center gap-2"
+            className="w-full text-left py-2.5 text-sm font-medium flex items-center gap-2"
             data-autofocus
           >
             <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 shrink-0">
@@ -121,7 +154,7 @@ const MessageActionSheet: React.FC<Props> = ({
           {mode === "group" && handlers.onMention && (
             <button
               onClick={handlers.onMention}
-              className="w-full text-left py-2.5 text-sm flex items-center gap-2"
+              className="w-full text-left py-2.5 text-sm font-medium flex items-center gap-2"
               title="Mention this user"
             >
               <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 shrink-0">
@@ -135,7 +168,7 @@ const MessageActionSheet: React.FC<Props> = ({
             <button
               onClick={handlers.onCopy}
               disabled={copyDisabled}
-              className={`w-full text-left py-2 text-sm flex items-center gap-2${
+              className={`w-full text-left py-2 text-sm font-medium flex items-center gap-2${
                 copyDisabled ? " cursor-not-allowed opacity-70" : ""
               }`}
             >
@@ -151,7 +184,7 @@ const MessageActionSheet: React.FC<Props> = ({
               <button
                 onClick={handlers.onEdit}
                 disabled={editDisabled}
-                className={`w-full text-left py-2 text-sm flex items-center gap-2${
+                className={`w-full text-left py-2 text-sm font-medium flex items-center gap-2${
                   editDisabled ? " cursor-not-allowed opacity-70" : ""
                 }`}
                 title={
@@ -168,7 +201,7 @@ const MessageActionSheet: React.FC<Props> = ({
               <button
                 onClick={handlers.onDelete}
                 disabled={deleteDisabled}
-                className={`w-full text-left py-2 text-sm flex items-center gap-2${
+                className={`w-full text-left py-2 text-sm font-medium flex items-center gap-2${
                   deleteDisabled
                     ? " text-red-400 cursor-not-allowed"
                     : " text-red-600"
@@ -190,7 +223,7 @@ const MessageActionSheet: React.FC<Props> = ({
               } catch {}
               onClose();
             }}
-            className="w-full text-left py-2.5 text-sm flex items-center gap-2"
+            className="w-full text-left py-2.5 text-sm font-medium flex items-center gap-2"
           >
             <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 shrink-0">
               <Flag size={20} weight="fill" />

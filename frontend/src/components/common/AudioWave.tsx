@@ -414,15 +414,43 @@ const AudioWave: React.FC<AudioWaveProps> = ({
     ? Math.min(current, effectiveDuration)
     : current;
 
-  const displaySeconds =
-    !hasStartedPlayback && !playing && effectiveDuration && safeCurrent < 0.01
-      ? effectiveDuration
-      : safeCurrent;
+  const displayTotal = effectiveDuration || 0;
+
+  const shouldShowElapsed =
+    hasStartedPlayback || playing || (safeCurrent ?? 0) > 0.05;
+  const displayTime = shouldShowElapsed ? safeCurrent : displayTotal;
 
   const showButtonSpinner = loading || (!waveReady && !hasCachedPeaks);
 
+  const cycleRates = [0.75, 1, 1.25, 1.5, 2];
+  const [rateIndex, setRateIndex] = React.useState(1); // default 1x
+  const rate = cycleRates[rateIndex] ?? 1;
+  React.useEffect(() => {
+    const wave = waveRef.current as any;
+    try {
+      if (wave && typeof wave.setPlaybackRate === "function") {
+        wave.setPlaybackRate(rate);
+      }
+    } catch {}
+  }, [rate]);
+
+  const onToggleRate = () => {
+    setRateIndex((i) => (i + 1) % cycleRates.length);
+  };
+
+  const onWrapperKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === " " || e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      toggle();
+      return;
+    }
+  };
+
   return (
-    <div className="flex w-full items-center gap-3">
+    <div
+      className="flex w-full items-center gap-3"
+      onKeyDown={onWrapperKeyDown}
+    >
       <button
         type="button"
         aria-label={
@@ -435,18 +463,13 @@ const AudioWave: React.FC<AudioWaveProps> = ({
         }}
         onMouseDown={stopBubble}
         onTouchStart={stopBubble}
-        onTouchEnd={(e) => {
-          stopBubble(e);
-          if (!showButtonSpinner && !playing) {
-            toggle();
-          }
-        }}
         className={`flex items-center justify-center transition focus:outline-none ${
-          showButtonSpinner ? "cursor-wait opacity-70" : "active:opacity-80"
+          showButtonSpinner ? "cursor-wait opacity-70" : ""
         }`}
         style={{
           backgroundColor: computedButtonBg,
           color: computedButtonIcon,
+          touchAction: "manipulation",
         }}
         disabled={showButtonSpinner}
       >
@@ -477,13 +500,29 @@ const AudioWave: React.FC<AudioWaveProps> = ({
         />
       </div>
 
-      <div className="flex h-10 w-10 items-center justify-center">
-        <span
-          className="text-xs tabular-nums select-none"
-          style={{ color: computedTimeColor }}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          aria-label={`Playback speed ${rate}x`}
+          title="Change speed"
+          onClick={(e) => {
+            stopBubble(e);
+            onToggleRate();
+          }}
+          className="flex h-8 w-10 items-center justify-center rounded-md border bg-white text-xs font-medium text-gray-500 active:opacity-90"
+          style={{ touchAction: "manipulation", borderColor: "#e2e8f0" }}
         >
-          {fmt(Math.max(0, displaySeconds))}
-        </span>
+          {rate.toFixed(2).replace(/\.00$/, "").replace(/0$/, "")}x
+        </button>
+
+        <div className="flex h-9 items-center justify-center px-2">
+          <span
+            className="text-xs tabular-nums select-none"
+            style={{ color: computedTimeColor }}
+          >
+            {fmt(Math.max(0, displayTime))}
+          </span>
+        </div>
       </div>
     </div>
   );

@@ -14,11 +14,15 @@ import { normalizeAppPath } from "../utils/routes.ts";
 import useRoutePrefetch from "../hooks/useRoutePrefetch";
 import { useGroupStore } from "../stores/groupStore";
 import { prefetchGroupDetails } from "../utils/prefetch";
+import { useDatingLikesSync } from "../hooks/useDatingLikesSync";
 
 const AppShell: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { userId, logout } = useAuthStore();
+  const userId = useAuthStore((s) => s.userId);
+  const logout = useAuthStore((s) => s.logout);
+  const username = useAuthStore((s) => s.username);
+  const joined = useAuthStore((s) => s.joined);
   const queryClient = useQueryClient();
   const currentGroup = useGroupStore((s) => s.currentGroup);
   const groups = useGroupStore((s) => s.groups);
@@ -36,7 +40,6 @@ const AppShell: React.FC = () => {
     );
   const hideBottomNav =
     normalizedPath.startsWith("/matches/liked-me") ||
-    normalizedPath.startsWith("/matches/my-likes") ||
     /^\/(?:chat(?:\/|$)|dm\/|edit-profile(?:\/|$)|dating-profile(?:\/|$)|edit-dating-profile(?:\/|$)|onboarding(?:\/|$)|u\/|emoji-picker(?:\/|$)|gif-picker(?:\/|$))/.test(
       normalizedPath
     );
@@ -91,6 +94,10 @@ const AppShell: React.FC = () => {
   }, [effectiveHasProfile, userId]);
   const datingPrefetchHandlers = useRoutePrefetch(datingPrefetchTarget);
   const homePrefetchHandlers = useRoutePrefetch("/");
+
+  useDatingLikesSync(joined ? username : null, {
+    enabled: joined,
+  });
 
   // Close drawer on route change
   useEffect(() => {

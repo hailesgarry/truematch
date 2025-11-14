@@ -201,14 +201,14 @@ const TextComposer: React.FC<TextComposerProps> = ({
       {/* Center the row so the send button aligns with the textarea vertically */}
       <div className="flex items-center gap-2">
         {recordingActive ? (
-          <div className="flex flex-1 items-center justify-center rounded-full bg-gray-100/90 px-4 py-3 shadow-sm">
+          <div className="flex flex-1 items-center justify-center rounded-full border border-slate-200 bg-slate-50 px-4 py-3">
             {renderRecordingInline}
           </div>
         ) : (
           <div className="relative flex-1">
             {/* Composer input inside a rounded container with tighter inner spacing */}
             <div
-              className={`relative w-full rounded-full bg-gray-100/90 pl-8 pr-28 py-2 flex items-center shadow-sm`}
+              className={`relative w-full rounded-full border border-slate-200 bg-slate-50 pl-8 pr-28 py-2 flex items-center`}
             >
               <AutoGrowTextarea
                 ref={inputRef}

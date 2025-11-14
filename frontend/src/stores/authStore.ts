@@ -43,7 +43,7 @@ function generateMonogramAvatar(name: string) {
     </defs>
     <rect width='128' height='128' rx='64' fill='url(#g)' />
     <text x='50%' y='50%' dy='.35em' text-anchor='middle'
-      font-family='system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif'
+      font-family='Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif'
       font-size='56' font-weight='700' fill='white'>${initials}</text>
   </svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;

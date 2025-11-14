@@ -1,4 +1,7 @@
 import React from "react";
+
+const NEUTRAL_BUBBLE_BORDER = "#e2e8f0";
+import { useTapGesture } from "../../hooks/useTapGesture";
 import type { Message, MessageMedia } from "../../types";
 import type { MediaPreviewMeta } from "../common/MediaUpload";
 import AudioWave from "../common/AudioWave";
@@ -10,17 +13,15 @@ interface ChatBubbleProps {
   message: Message;
   colors: { bg: string; fg: string };
   openActionsFor: (m: Message) => void;
-  openReactionsFor?: (m: Message) => void;
-  buildPressHandlers: (
-    message: Message,
-    openActions: () => void
-  ) => React.HTMLAttributes<HTMLElement>;
+  openModalFor?: (m: Message, anchor?: HTMLElement | null) => void;
+  onQuickReact?: (m: Message) => void;
   tokenizeTextWithGifs: (text: string) => React.ReactNode;
   MediaMessage: React.FC<{
     media: MessageMedia;
     replyMode?: boolean;
     className?: string;
     onLongPress?: () => void;
+    onDoubleTap?: (anchor?: HTMLElement | null) => void;
     overlayMeta?: MediaPreviewMeta;
   }>;
   AnimatedMedia: React.FC<{
@@ -62,11 +63,11 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
   message: m,
   colors,
   openActionsFor,
-  openReactionsFor,
-  buildPressHandlers,
-  tokenizeTextWithGifs,
+  openModalFor,
+  onQuickReact: _onQuickReact,
   MediaMessage,
   AnimatedMedia,
+  tokenizeTextWithGifs,
   currentUsername,
   onReplyPreviewClick,
   onVoiceNoteDuration,
@@ -75,6 +76,102 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
   utils,
   resolveMediaOverlayMeta,
 }) => {
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+  const enableGestures = Boolean(openActionsFor);
+
+  const updatePressState = React.useCallback(
+    (_next: "idle" | "pressing" | "activated") => {},
+    []
+  );
+
+  const gestureHintId = React.useId();
+
+  const triggerHaptics = React.useCallback(() => {
+    if (
+      typeof navigator !== "undefined" &&
+      typeof (navigator as { vibrate?: (pattern: number) => void }).vibrate ===
+        "function"
+    ) {
+      try {
+        (navigator as { vibrate?: (pattern: number) => void }).vibrate?.(12);
+      } catch {
+        // ignore haptic errors
+      }
+    }
+  }, []);
+
+  const runLongPressEffects = React.useCallback(() => {
+    triggerHaptics();
+    updatePressState("activated");
+    window.setTimeout(() => updatePressState("idle"), 220);
+  }, [triggerHaptics, updatePressState]);
+
+  const activateActions = React.useCallback(
+    (evt?: Event | React.SyntheticEvent) => {
+      if (evt) {
+        const nativeEvent = evt as Event;
+        nativeEvent.preventDefault();
+        nativeEvent.stopPropagation();
+      }
+      triggerHaptics();
+      updatePressState("activated");
+      if (openModalFor) {
+        openModalFor(m, containerRef.current);
+      } else {
+        openActionsFor(m);
+      }
+      window.setTimeout(() => updatePressState("idle"), 160);
+    },
+    [m, openActionsFor, openModalFor, triggerHaptics, updatePressState]
+  );
+
+  const tapHandlers = useTapGesture({
+    onSingleTap: undefined, // single tap does nothing for text bubble (WhatsApp-like)
+    onDoubleTap: enableGestures ? () => activateActions() : undefined,
+    onLongPress: enableGestures
+      ? () => {
+          runLongPressEffects();
+          openActionsFor(m);
+        }
+      : undefined,
+    doubleTapMs: 250,
+    longPressMsTouch: 450,
+    longPressMsMouse: 650,
+    moveTolerancePx: 10,
+    stopPropagation: true,
+    preventDefault: false,
+  });
+
+  const pressHandlers: React.HTMLAttributes<HTMLElement> = {
+    ...tapHandlers,
+    tabIndex: 0,
+    role: "button",
+    "aria-describedby": gestureHintId,
+    onKeyDown: (event: React.KeyboardEvent) => {
+      const key = event.key;
+      const isContext =
+        key === "ContextMenu" || (event.shiftKey && key === "F10");
+      if (isContext) {
+        event.preventDefault();
+        runLongPressEffects();
+        openActionsFor(m);
+      }
+    },
+  };
+
+  const handleMediaDoubleTap = React.useCallback(
+    (anchor?: HTMLElement | null) => {
+      if (openModalFor) {
+        openModalFor(m, anchor ?? containerRef.current);
+      } else {
+        openActionsFor(m);
+      }
+    },
+    [m, openActionsFor, openModalFor]
+  );
+
+  const pressMotionClass = "";
+
   const chatMsg = m as any;
   const isDeleted = Boolean((m as any).deleted || (m as any).deletedAt);
   const structuredGif = (m as any).kind === "gif" && (m as any).media;
@@ -87,6 +184,14 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
     !trimmed.includes(" ");
   const emojiOnly = typeof m.text === "string" && m.text.match(/^\p{Emoji}+$/u);
   const { bg, fg } = colors;
+  const neutralBorderEligible = typeof bg === "string" && !/gradient/i.test(bg);
+  const bubbleStyle = React.useMemo(() => {
+    const style: React.CSSProperties = { background: bg, color: fg };
+    if (neutralBorderEligible) {
+      style.border = `1px solid ${NEUTRAL_BUBBLE_BORDER}`;
+    }
+    return style;
+  }, [bg, fg, neutralBorderEligible]);
 
   const replyPreview = chatMsg.replyTo ? (
     <ReplyPreview
@@ -124,10 +229,15 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
     const timeColor = accentSelfAudio ? "#ffffff" : overrideTimeColor;
     return (
       <div
-        className="w-full py-2 px-2.5 rounded-[20px] break-words transition cursor-pointer active:opacity-80"
-        style={{ background: bg, color: fg }}
-        {...buildPressHandlers(m, () => openActionsFor(m))}
+        className={`w-full py-2 px-2.5 rounded-[20px] break-words transition cursor-pointer select-none ${pressMotionClass}`}
+        style={bubbleStyle}
+        {...pressHandlers}
+        ref={containerRef}
       >
+        <span id={gestureHintId} className="sr-only">
+          Double tap to open message actions. Long press to copy and open the
+          same actions.
+        </span>
         {replyPreview}
         <AudioWave
           url={audio.url}
@@ -150,7 +260,7 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
     return (
       <div
         className="inline-block max-w-full py-2 px-2.5 rounded-[20px] break-words opacity-60 cursor-default text-left"
-        style={{ background: bg, color: fg }}
+        style={bubbleStyle}
       >
         <div className="italic text-sm select-none">
           This message was deleted
@@ -177,10 +287,15 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
     if (chatMsg.replyTo) {
       return (
         <div
-          className="w-full py-2 px-2.5 rounded-[20px] break-words transition cursor-pointer active:opacity-80"
-          style={{ background: bg, color: fg }}
-          {...buildPressHandlers(m, () => openActionsFor(m))}
+          className={`w-full py-2 px-2.5 rounded-[20px] break-words transition cursor-pointer select-none ${pressMotionClass}`}
+          style={bubbleStyle}
+          {...pressHandlers}
+          ref={containerRef}
         >
+          <span id={gestureHintId} className="sr-only">
+            Double tap to open message actions. Long press to copy and open the
+            same actions.
+          </span>
           {replyPreview}
           {mediaEl}
         </div>
@@ -188,9 +303,14 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
     }
     return (
       <div
-        className="w-full flex flex-col gap-1 cursor-pointer active:opacity-80"
-        {...buildPressHandlers(m, () => openActionsFor(m))}
+        className={`w-full flex flex-col gap-1 cursor-pointer select-none ${pressMotionClass}`}
+        {...pressHandlers}
+        ref={containerRef}
       >
+        <span id={gestureHintId} className="sr-only">
+          Double tap to open message actions. Long press to copy and open the
+          same actions.
+        </span>
         {mediaEl}
       </div>
     );
@@ -201,10 +321,15 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
     if (chatMsg.replyTo) {
       return (
         <div
-          className="w-full py-2 px-2.5 rounded-[20px] break-words transition cursor-pointer active:opacity-80"
-          style={{ background: bg, color: fg }}
-          {...buildPressHandlers(m, () => openActionsFor(m))}
+          className={`w-full py-2 px-2.5 rounded-[20px] break-words transition cursor-pointer select-none ${pressMotionClass}`}
+          style={bubbleStyle}
+          {...pressHandlers}
+          ref={containerRef}
         >
+          <span id={gestureHintId} className="sr-only">
+            Double tap to open message actions. Long press to copy and open the
+            same actions.
+          </span>
           {replyPreview}
           <AnimatedMedia url={trimmed} large />
         </div>
@@ -212,9 +337,14 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
     }
     return (
       <div
-        className="w-full flex flex-col gap-1 cursor-pointer active:opacity-80"
-        {...buildPressHandlers(m, () => openActionsFor(m))}
+        className={`w-full flex flex-col gap-1 cursor-pointer select-none ${pressMotionClass}`}
+        {...pressHandlers}
+        ref={containerRef}
       >
+        <span id={gestureHintId} className="sr-only">
+          Double tap to open message actions. Long press to copy and open the
+          same actions.
+        </span>
         <AnimatedMedia url={trimmed} large />
       </div>
     );
@@ -225,10 +355,15 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
     if (chatMsg.replyTo) {
       return (
         <div
-          className="w-full py-2 px-2.5 rounded-[20px] break-words transition cursor-pointer active:opacity-80"
-          style={{ background: bg, color: fg }}
-          {...buildPressHandlers(m, () => openActionsFor(m))}
+          className={`w-full py-2 px-2.5 rounded-[20px] break-words transition cursor-pointer select-none ${pressMotionClass}`}
+          style={bubbleStyle}
+          {...pressHandlers}
+          ref={containerRef}
         >
+          <span id={gestureHintId} className="sr-only">
+            Double tap to open message actions. Long press to copy and open the
+            same actions.
+          </span>
           {replyPreview}
           <div className="text-4xl sm:text-5xl leading-none">{m.text}</div>
         </div>
@@ -236,9 +371,14 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
     }
     return (
       <div
-        className="w-full flex flex-col gap-1 cursor-pointer select-text"
-        {...buildPressHandlers(m, () => openActionsFor(m))}
+        className={`w-full flex flex-col gap-1 cursor-pointer select-none ${pressMotionClass}`}
+        {...pressHandlers}
+        ref={containerRef}
       >
+        <span id={gestureHintId} className="sr-only">
+          Double tap to open message actions. Long press to copy and open the
+          same actions.
+        </span>
         <div className="text-4xl sm:text-5xl leading-none">{m.text}</div>
       </div>
     );
@@ -258,14 +398,15 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
       return (
         <div
           className="w-full py-2 px-2.5 rounded-[20px] break-words transition"
-          style={{ background: bg, color: fg }}
+          style={bubbleStyle}
         >
           {replyPreview}
           <MediaMessage
             media={media}
             replyMode
             className="w-full"
-            onLongPress={() => (openReactionsFor ?? openActionsFor)(m)}
+            onLongPress={() => openActionsFor(m)}
+            onDoubleTap={handleMediaDoubleTap}
             overlayMeta={overlayMeta}
           />
         </div>
@@ -275,7 +416,8 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
       <MediaMessage
         media={media}
         className="w-full"
-        onLongPress={() => (openReactionsFor ?? openActionsFor)(m)}
+        onLongPress={() => openActionsFor(m)}
+        onDoubleTap={handleMediaDoubleTap}
         overlayMeta={overlayMeta}
       />
     );
@@ -305,11 +447,11 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
     hasPreview
       ? "inline-flex flex-col items-stretch gap-2 w-full max-w-full min-w-0"
       : "inline-block max-w-full",
-    "py-1.5 px-2.5 rounded-[20px] break-words transition cursor-pointer active:opacity-80 leading-tight text-left",
+    "py-1.5 px-2.5 rounded-[20px] break-words transition cursor-pointer leading-tight text-left",
   ].join(" ");
 
   const textClasses = [
-    "break-words whitespace-pre-line leading-tight text-message",
+    "break-words whitespace-pre-line leading-tight text-sm",
     hasPreview ? "min-w-0" : "",
   ]
     .filter(Boolean)
@@ -321,10 +463,15 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
 
   return (
     <div
-      className={bubbleClasses}
-      style={{ background: bg, color: fg }}
-      {...buildPressHandlers(m, () => openActionsFor(m))}
+      className={`${bubbleClasses} select-none ${pressMotionClass}`}
+      style={bubbleStyle}
+      {...pressHandlers}
+      ref={containerRef}
     >
+      <span id={gestureHintId} className="sr-only">
+        Double tap to open message actions. Long press to copy and open the same
+        actions.
+      </span>
       {replyPreview}
       {previewTarget ? (
         <>

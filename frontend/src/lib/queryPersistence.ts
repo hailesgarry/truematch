@@ -46,10 +46,56 @@ function deepSanitize<T>(
     return value;
   }
 
+  if (value instanceof Date || value instanceof RegExp) {
+    return value;
+  }
+
+  if (typeof Blob !== "undefined" && value instanceof Blob) {
+    return value;
+  }
+
+  if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
+    return value;
+  }
+
   const objectValue = value as unknown as object;
 
   if (seen.has(objectValue)) {
     return seen.get(objectValue) as T;
+  }
+
+  if (value instanceof Error) {
+    const plainError: Record<string, unknown> = {
+      name: value.name,
+      message: value.message,
+    };
+    if (typeof value.stack === "string") {
+      plainError.stack = value.stack;
+    }
+    if ("cause" in value && value.cause !== undefined) {
+      const sanitizedCause = deepSanitize((value as any).cause, seen);
+      if (sanitizedCause !== undefined) {
+        plainError.cause = sanitizedCause;
+      }
+    }
+
+    seen.set(objectValue, plainError);
+
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== "string") continue;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !("value" in descriptor)) continue;
+      const entryValue = descriptor.value;
+      if (typeof entryValue === "function" || isPromiseLike(entryValue)) {
+        continue;
+      }
+      const sanitized = deepSanitize(entryValue, seen);
+      if (sanitized !== undefined || entryValue === undefined) {
+        plainError[key] = sanitized;
+      }
+    }
+
+    return plainError as unknown as T;
   }
 
   if (Array.isArray(value)) {
@@ -128,7 +174,40 @@ function deepSanitize<T>(
   }
 
   if (!isPlainObject(value)) {
-    return value;
+    const result: Record<string, unknown> = {};
+    seen.set(objectValue, result);
+    let mutated = false;
+
+    for (const key of Reflect.ownKeys(objectValue)) {
+      if (typeof key !== "string") {
+        continue;
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(objectValue, key);
+      if (!descriptor || !("value" in descriptor)) {
+        continue;
+      }
+      const entryValue = descriptor.value as unknown;
+      if (typeof entryValue === "function" || isPromiseLike(entryValue)) {
+        mutated = true;
+        continue;
+      }
+      const sanitizedValue = deepSanitize(entryValue, seen);
+      if (!mutated && sanitizedValue !== entryValue) {
+        mutated = true;
+      }
+      if (sanitizedValue !== undefined || entryValue === undefined) {
+        result[key] = sanitizedValue;
+      } else {
+        mutated = true;
+      }
+    }
+
+    if (!mutated && Object.keys(result).length === 0) {
+      seen.set(objectValue, value);
+      return value;
+    }
+
+    return result as unknown as T;
   }
 
   const originalEntries = Object.entries(value as Record<string, unknown>);

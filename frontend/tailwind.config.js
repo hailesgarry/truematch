@@ -27,10 +27,10 @@ export default {
       },
       fontSize: {
         // 15px for message text
-        message: "15px",
+        message: "14px",
       },
       fontFamily: {
-        // Inter as the default sans stack
+        // Inter provides a modern, highly legible sans stack for chat UI
         sans: ["Inter", ...defaultTheme.fontFamily.sans],
         // Utility for logo text
         logo: ["Pacifico", "cursive"],

@@ -4,6 +4,7 @@ import type { Message, MessageReplySummary } from "../../../types";
 import type { MediaPreviewMeta } from "../../../components/common/MediaUpload";
 import MessageReactions from "../../../components/MessageReactions";
 import ChatBubble from "../../../components/chat/ChatBubble";
+import SwipeReplyWrapper from "../../../components/chat/SwipeReplyWrapper";
 import UserQuickActions from "../../../components/common/UserQuickActions";
 import RelativeTime from "../../../components/common/RelativeTime";
 import ScrollRestoration from "../../../components/common/ScrollRestoration";
@@ -38,11 +39,8 @@ type GroupMessageListProps = {
   handleQuickMention: (username: string) => void;
   openFilterModal: (username: string) => void;
   openActionsFor: (message: Message) => void;
-  openReactionPicker: (message: Message) => void;
-  buildPressHandlers: (
-    message: Message,
-    openActions: () => void
-  ) => React.HTMLAttributes<HTMLElement>;
+  openModalFor?: (message: Message, anchor?: HTMLElement | null) => void;
+  onQuickReact: (message: Message) => void;
   scrollToReferenced: (reply: {
     username: string;
     timestamp?: string | number | null;
@@ -53,6 +51,7 @@ type GroupMessageListProps = {
   onReactionCountClick: (message: Message) => void;
   isConnected: boolean;
   isEmojiOnly: (text?: string) => boolean;
+  onSwipeReply: (message: Message) => void;
 };
 
 const GroupMessageList: React.FC<GroupMessageListProps> = ({
@@ -73,14 +72,15 @@ const GroupMessageList: React.FC<GroupMessageListProps> = ({
   handleQuickMention,
   openFilterModal,
   openActionsFor,
-  openReactionPicker,
-  buildPressHandlers,
+  openModalFor,
+  onQuickReact,
   scrollToReferenced,
   handleVoiceNoteDuration,
   resolveMediaOverlayMeta,
   onReactionCountClick,
   isConnected,
   isEmojiOnly,
+  onSwipeReply,
 }) => {
   const scrollContainerRef = React.useRef<HTMLDivElement | null>(null);
   const scrollRestorationRef = React.useRef<{
@@ -163,10 +163,10 @@ const GroupMessageList: React.FC<GroupMessageListProps> = ({
               <img
                 src={resolvedAvatar}
                 alt={`${message.username}'s avatar`}
-                className="w-8 h-8 rounded-full"
+                className="w-10 h-10 rounded-full"
               />
             ) : (
-              <div className="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center text-gray-600 text-xs font-bold">
+              <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center text-gray-600 text-sm font-bold">
                 {typeof message.username === "string" &&
                 message.username.length > 0
                   ? message.username.charAt(0).toUpperCase()
@@ -195,7 +195,7 @@ const GroupMessageList: React.FC<GroupMessageListProps> = ({
                 onFilterUser={openFilterModal}
               >
                 <span
-                  className={`text-sm font-medium cursor-pointer ${
+                  className={`text-sm font-bold cursor-pointer ${
                     truncateUsername
                       ? "inline-block max-w-[9rem] truncate align-bottom"
                       : ""
@@ -206,7 +206,7 @@ const GroupMessageList: React.FC<GroupMessageListProps> = ({
               </UserQuickActions>
               <RelativeTime
                 value={(chatMsg as any).timestamp}
-                className="ml-2 text-[11px] text-gray-500"
+                className="ml-2 text-sm text-gray-500"
                 withSuffix={false}
                 minUnit="minute"
                 hideBelowMin={false}
@@ -233,42 +233,44 @@ const GroupMessageList: React.FC<GroupMessageListProps> = ({
               )}
             </div>
 
-            <ChatBubble
-              message={message}
-              colors={colors}
-              openActionsFor={openActionsFor}
-              openReactionsFor={openReactionPicker}
-              buildPressHandlers={buildPressHandlers}
-              tokenizeTextWithGifs={mentionTokenizer}
-              MediaMessage={MediaMessage}
-              AnimatedMedia={AnimatedMedia}
-              currentUsername={username}
-              onReplyPreviewClick={(reply) =>
-                scrollToReferenced({
-                  username: reply.username,
-                  timestamp: reply.timestamp,
-                })
-              }
-              onVoiceNoteDuration={handleVoiceNoteDuration}
-              audioOverrides={{
-                trackColor: "#d1d5db",
-                progressColor: "#6b7280",
-                buttonIconColor: "#6b7280",
-              }}
-              resolveMediaOverlayMeta={resolveMediaOverlayMeta}
-              utils={{
-                isGifUrl,
-                isEmojiOnly,
-                isVideoUrl,
-                isImageUrl,
-                truncate,
-              }}
-            />
+            <SwipeReplyWrapper onReply={() => onSwipeReply(message)}>
+              <ChatBubble
+                message={message}
+                colors={colors}
+                openActionsFor={openActionsFor}
+                openModalFor={openModalFor}
+                onQuickReact={onQuickReact}
+                tokenizeTextWithGifs={mentionTokenizer}
+                MediaMessage={MediaMessage}
+                AnimatedMedia={AnimatedMedia}
+                currentUsername={username}
+                onReplyPreviewClick={(reply) =>
+                  scrollToReferenced({
+                    username: reply.username,
+                    timestamp: reply.timestamp,
+                  })
+                }
+                onVoiceNoteDuration={handleVoiceNoteDuration}
+                audioOverrides={{
+                  trackColor: "#d1d5db",
+                  progressColor: "#6b7280",
+                  buttonIconColor: "#6b7280",
+                }}
+                resolveMediaOverlayMeta={resolveMediaOverlayMeta}
+                utils={{
+                  isGifUrl,
+                  isEmojiOnly,
+                  isVideoUrl,
+                  isImageUrl,
+                  truncate,
+                }}
+              />
+            </SwipeReplyWrapper>
           </div>
         </div>
 
         <div className="flex">
-          <div className="w-10 flex-shrink-0" aria-hidden="true" />
+          <div className="w-12 flex-shrink-0" aria-hidden="true" />
           <div className="flex-1 flex justify-start">
             <div className={RESPONSIVE_BUBBLE_WIDTH}>
               {!chatMsg.deleted && currentGroupId && (
@@ -396,10 +398,10 @@ const GroupMessageList: React.FC<GroupMessageListProps> = ({
                     <img
                       src={resolvedAvatar}
                       alt={`${message.username}'s avatar`}
-                      className="w-8 h-8 rounded-full"
+                      className="w-10 h-10 rounded-full"
                     />
                   ) : (
-                    <div className="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center text-gray-600 text-xs font-bold">
+                    <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center text-gray-600 text-sm font-bold">
                       {typeof message.username === "string" &&
                       message.username.length > 0
                         ? message.username.charAt(0).toUpperCase()
@@ -430,7 +432,7 @@ const GroupMessageList: React.FC<GroupMessageListProps> = ({
                       onFilterUser={openFilterModal}
                     >
                       <span
-                        className={`text-sm font-medium cursor-pointer ${
+                        className={`text-sm font-bold cursor-pointer ${
                           truncateUsername
                             ? "inline-block max-w-[9rem] truncate align-bottom"
                             : ""
@@ -441,7 +443,7 @@ const GroupMessageList: React.FC<GroupMessageListProps> = ({
                     </UserQuickActions>
                     <RelativeTime
                       value={(chatMsg as any).timestamp}
-                      className="ml-2 text-[11px] text-gray-500"
+                      className="ml-2 text-sm text-gray-500"
                       withSuffix={false}
                       minUnit="minute"
                       hideBelowMin={false}
@@ -468,42 +470,44 @@ const GroupMessageList: React.FC<GroupMessageListProps> = ({
                     )}
                   </div>
 
-                  <ChatBubble
-                    message={message}
-                    colors={colors}
-                    openActionsFor={openActionsFor}
-                    openReactionsFor={openReactionPicker}
-                    buildPressHandlers={buildPressHandlers}
-                    tokenizeTextWithGifs={mentionTokenizer}
-                    MediaMessage={MediaMessage}
-                    AnimatedMedia={AnimatedMedia}
-                    currentUsername={username}
-                    onReplyPreviewClick={(reply) =>
-                      scrollToReferenced({
-                        username: reply.username,
-                        timestamp: reply.timestamp,
-                      })
-                    }
-                    onVoiceNoteDuration={handleVoiceNoteDuration}
-                    audioOverrides={{
-                      trackColor: "#d1d5db",
-                      progressColor: "#6b7280",
-                      buttonIconColor: "#6b7280",
-                    }}
-                    resolveMediaOverlayMeta={resolveMediaOverlayMeta}
-                    utils={{
-                      isGifUrl,
-                      isEmojiOnly,
-                      isVideoUrl,
-                      isImageUrl,
-                      truncate,
-                    }}
-                  />
+                  <SwipeReplyWrapper onReply={() => onSwipeReply(message)}>
+                    <ChatBubble
+                      message={message}
+                      colors={colors}
+                      openActionsFor={openActionsFor}
+                      openModalFor={openModalFor}
+                      onQuickReact={onQuickReact}
+                      tokenizeTextWithGifs={mentionTokenizer}
+                      MediaMessage={MediaMessage}
+                      AnimatedMedia={AnimatedMedia}
+                      currentUsername={username}
+                      onReplyPreviewClick={(reply) =>
+                        scrollToReferenced({
+                          username: reply.username,
+                          timestamp: reply.timestamp,
+                        })
+                      }
+                      onVoiceNoteDuration={handleVoiceNoteDuration}
+                      audioOverrides={{
+                        trackColor: "#d1d5db",
+                        progressColor: "#6b7280",
+                        buttonIconColor: "#6b7280",
+                      }}
+                      resolveMediaOverlayMeta={resolveMediaOverlayMeta}
+                      utils={{
+                        isGifUrl,
+                        isEmojiOnly,
+                        isVideoUrl,
+                        isImageUrl,
+                        truncate,
+                      }}
+                    />
+                  </SwipeReplyWrapper>
                 </div>
               </div>
 
               <div className="flex">
-                <div className="w-10 flex-shrink-0" aria-hidden="true" />
+                <div className="w-12 flex-shrink-0" aria-hidden="true" />
                 <div className="flex-1 flex justify-start">
                   <div className={RESPONSIVE_BUBBLE_WIDTH}>
                     {!chatMsg.deleted && currentGroupId && (

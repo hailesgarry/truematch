@@ -6,14 +6,20 @@ import React, {
   useState,
 } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowBendUpRight } from "phosphor-react";
+import { ArrowBendUpLeft, ArrowBendUpRight } from "phosphor-react";
+import { useSwipeable } from "react-swipeable";
+import type { SwipeEventData, SwipeableHandlers } from "react-swipeable";
 import DatingCard from "../components/common/DatingCard";
 import PageHeader from "../components/common/PageHeader";
 // REMOVED: import Header from "../components/layout/Header";
 // REMOVED: import BottomNav from "../components/layout/BottomNav";
 import { useAuthStore } from "../stores/authStore";
 import { useUiStore } from "../stores/uiStore";
-import { fetchDatingProfile } from "../services/api";
+import {
+  fetchDatingProfile,
+  createDatingLike,
+  deleteDatingLike,
+} from "../services/api";
 import type { DatingProfile } from "../types";
 import { filterProfilesByPreferences } from "../utils/dating";
 import { useLikesStore } from "../stores/likesStore";
@@ -35,8 +41,6 @@ const normalizeUsername = (value: string | null | undefined): string => {
   return value.trim();
 };
 
-const SCROLL_STORAGE_KEY = "__scroll:dating";
-
 const dedupeProfiles = (items: DatingProfile[]): DatingProfile[] => {
   const seen = new Set<string>();
   const unique: DatingProfile[] = [];
@@ -54,6 +58,12 @@ const dedupeProfiles = (items: DatingProfile[]): DatingProfile[] => {
   }
   return unique;
 };
+
+interface SwipeHistoryEntry {
+  index: number;
+  profile: DatingProfile;
+  direction: "left" | "right";
+}
 
 const DatingPage: React.FC = () => {
   const navigate = useNavigate();
@@ -111,20 +121,18 @@ const DatingPage: React.FC = () => {
     [userId]
   );
 
-  const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const loadMoreRef = useRef<HTMLDivElement | null>(null);
-  const setScrollerNode = useCallback((node: HTMLDivElement | null) => {
-    if (!node) {
-      scrollerRef.current = null;
-      return;
-    }
-    scrollerRef.current = node;
-    try {
-      const stored = Number(sessionStorage.getItem(SCROLL_STORAGE_KEY) || "0");
-      if (Number.isFinite(stored)) {
-        node.scrollTop = stored;
-      }
-    } catch {}
+  const [currentIndex, setCurrentIndex] = useState(-1);
+  const currentIndexRef = useRef(currentIndex);
+  const exitTimerRef = useRef<number | null>(null);
+  const [dragState, setDragState] = useState({ offsetX: 0, isDragging: false });
+  const [leavingCard, setLeavingCard] = useState<{
+    index: number;
+    direction: "left" | "right";
+  } | null>(null);
+  const [swipeHistory, setSwipeHistory] = useState<SwipeHistoryEntry[]>([]);
+  const updateCurrentIndex = useCallback((value: number) => {
+    currentIndexRef.current = value;
+    setCurrentIndex(value);
   }, []);
 
   useEffect(() => {
@@ -180,19 +188,6 @@ const DatingPage: React.FC = () => {
       );
     } catch {}
   }, [headerHeight]);
-
-  // Keep-alive scroll position for dating list
-  useEffect(() => {
-    const node = scrollerRef.current;
-    if (!node) return;
-    const onScroll = () => {
-      try {
-        sessionStorage.setItem(SCROLL_STORAGE_KEY, String(node.scrollTop));
-      } catch {}
-    };
-    node.addEventListener("scroll", onScroll, { passive: true });
-    return () => node.removeEventListener("scroll", onScroll);
-  }, []);
 
   // Background refetch on tab visibility regain
   useEffect(() => {
@@ -278,6 +273,13 @@ const DatingPage: React.FC = () => {
     mutationFn: async (target: string) => {
       // Socket handles server-side; simulate latency-friendly noop
       likeUser(target);
+      if (username) {
+        try {
+          await createDatingLike(username, target);
+        } catch (error) {
+          console.warn("Failed to persist dating like", error);
+        }
+      }
       return true as const;
     },
     onMutate: async () => {
@@ -295,6 +297,13 @@ const DatingPage: React.FC = () => {
     mutationKey: ["dating", "unlike"],
     mutationFn: async (target: string) => {
       unlikeUser(target);
+      if (username) {
+        try {
+          await deleteDatingLike(username, target);
+        } catch (error) {
+          console.warn("Failed to remove dating like", error);
+        }
+      }
       return true as const;
     },
     onMutate: async () => {
@@ -309,59 +318,135 @@ const DatingPage: React.FC = () => {
 
   const hasAny = profiles.length > 0;
 
-  // Lazy-loading config for visible slice
-  const PAGE_SIZE = 12; // number of cards to append per batch
-  const OBS_THRESHOLD = 0.25; // when 25% of sentinel is visible, load next
+  const handleLike = useCallback(
+    (profile: DatingProfile) => {
+      const uname = profile?.username;
+      if (!uname) return;
+      likeMut.mutate(uname);
+    },
+    [likeMut]
+  );
 
-  const [visible, setVisible] = useState<DatingProfile[]>([]);
-  const [nextIndex, setNextIndex] = useState(0);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const hasMore = nextIndex < profiles.length;
+  const handlePass = useCallback((_profile: DatingProfile) => {
+    // Reserved for future backend integration to record a "pass" event.
+  }, []);
 
-  const renderedProfiles = useMemo(() => dedupeProfiles(visible), [visible]);
+  const resetDragState = useCallback(() => {
+    setDragState({ offsetX: 0, isDragging: false });
+  }, []);
 
-  // Reset visible list when the full profiles list changes
-  useEffect(() => {
-    if (!profiles.length) {
-      setVisible([]);
-      setNextIndex(0);
-      return;
+  const triggerSwipe = useCallback(
+    (direction: "left" | "right") => {
+      const index = currentIndexRef.current;
+      if (index < 0) return;
+      if (leavingCard) return;
+      const profile = profiles[index];
+      if (!profile) return;
+
+      if (direction === "right" && !hasMyProfile) {
+        setShowLikeGate(true);
+        return;
+      }
+
+      resetDragState();
+      setLeavingCard({ index, direction });
+      if (direction === "right") {
+        handleLike(profile);
+      } else {
+        handlePass(profile);
+      }
+
+      if (exitTimerRef.current != null) {
+        window.clearTimeout(exitTimerRef.current);
+        exitTimerRef.current = null;
+      }
+      exitTimerRef.current = window.setTimeout(() => {
+        setSwipeHistory((prev) => [...prev, { index, profile, direction }]);
+        updateCurrentIndex(index - 1);
+        setLeavingCard(null);
+        exitTimerRef.current = null;
+      }, 280);
+    },
+    [
+      exitTimerRef,
+      handleLike,
+      handlePass,
+      hasMyProfile,
+      leavingCard,
+      profiles,
+      resetDragState,
+      setShowLikeGate,
+      updateCurrentIndex,
+    ]
+  );
+
+  const handleRewind = useCallback(() => {
+    if (leavingCard) return;
+    if (exitTimerRef.current != null) {
+      window.clearTimeout(exitTimerRef.current);
+      exitTimerRef.current = null;
     }
-    const initial = profiles.slice(0, PAGE_SIZE);
-    setVisible(initial);
-    setNextIndex(initial.length);
-  }, [profiles]);
-
-  const loadNextBatch = useCallback(() => {
-    if (!hasMore || loadingMore) return;
-    setLoadingMore(true);
-    Promise.resolve().then(() => {
-      const end = Math.min(nextIndex + PAGE_SIZE, profiles.length);
-      const slice = profiles.slice(nextIndex, end);
-      if (slice.length) setVisible((prev) => [...prev, ...slice]);
-      setNextIndex(end);
-      setLoadingMore(false);
-    });
-  }, [hasMore, loadingMore, nextIndex, profiles]);
-
-  // IntersectionObserver to append when sentinel enters viewport
-  useEffect(() => {
-    const el = loadMoreRef.current;
-    const root = scrollerRef.current;
-    if (!el || !root) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting && hasMore && !loadingMore && !loading) {
-            loadNextBatch();
-          }
+    setSwipeHistory((prev) => {
+      if (!prev.length) return prev;
+      const last = prev[prev.length - 1];
+      const next = prev.slice(0, -1);
+      setLeavingCard(null);
+      resetDragState();
+      updateCurrentIndex(last.index);
+      if (last.direction === "right") {
+        const uname = last.profile?.username;
+        if (uname && uname.trim().length > 0) {
+          unlikeMut.mutate(uname);
         }
-      },
-      { root, threshold: OBS_THRESHOLD }
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [hasMore, loadingMore, loading, loadNextBatch]);
+      }
+      return next;
+    });
+  }, [
+    exitTimerRef,
+    leavingCard,
+    resetDragState,
+    unlikeMut,
+    updateCurrentIndex,
+  ]);
+
+  useEffect(() => {
+    if (exitTimerRef.current != null) {
+      window.clearTimeout(exitTimerRef.current);
+      exitTimerRef.current = null;
+    }
+    updateCurrentIndex(profiles.length - 1);
+    setSwipeHistory([]);
+    setLeavingCard(null);
+    resetDragState();
+  }, [profiles, resetDragState, updateCurrentIndex]);
+
+  useEffect(() => {
+    return () => {
+      if (exitTimerRef.current != null) {
+        window.clearTimeout(exitTimerRef.current);
+      }
+    };
+  }, []);
+
+  const swipeHandlers = useSwipeable({
+    trackMouse: true,
+    trackTouch: true,
+    preventScrollOnSwipe: true,
+    delta: 20,
+    onSwiping: ({ deltaX }: SwipeEventData) => {
+      if (leavingCard) return;
+      setDragState({ offsetX: deltaX, isDragging: true });
+    },
+    onSwiped: () => {
+      resetDragState();
+    },
+    onSwipedLeft: () => {
+      triggerSwipe("left");
+    },
+    onSwipedRight: () => {
+      triggerSwipe("right");
+    },
+  });
 
   // Progressive image UX: pre-decode first row, then idle prefetch next screen
   const decodedOnceRef = useRef(false);
@@ -390,11 +475,41 @@ const DatingPage: React.FC = () => {
     [headerHeight]
   );
   const headerPadding = useMemo(() => `${headerHeight}px`, [headerHeight]);
+
+  const lastHistoryEntry =
+    swipeHistory.length > 0 ? swipeHistory[swipeHistory.length - 1] : null;
+  const rewindDisabled = !lastHistoryEntry || leavingCard !== null;
+  const rewindIcon = lastHistoryEntry ? (
+    lastHistoryEntry.direction === "right" ? (
+      <ArrowBendUpLeft size={24} />
+    ) : (
+      <ArrowBendUpRight size={24} />
+    )
+  ) : (
+    <ArrowBendUpRight size={24} />
+  );
+  const rewindLabel = lastHistoryEntry
+    ? lastHistoryEntry.direction === "right"
+      ? "Undo like"
+      : "Undo pass"
+    : "Nothing to rewind";
+  const rewindButton = (
+    <button
+      type="button"
+      onClick={handleRewind}
+      disabled={rewindDisabled}
+      aria-label={rewindLabel}
+      className={`flex items-center justify-center transition ${
+        rewindDisabled ? "text-gray-300" : "text-gray-700 hover:text-gray-900"
+      }`}
+    >
+      {rewindIcon}
+    </button>
+  );
   return (
     <div className="bg-white text-gray-900">
       <PageHeader
-        onBack={() => navigate(-1)}
-        backIcon={<ArrowBendUpRight size={24} />}
+        right={rewindButton}
         position="fixed"
         containerClassName="max-w-md mx-auto dating-page-header-inner"
         heightClassName="h-12"
@@ -408,148 +523,228 @@ const DatingPage: React.FC = () => {
           )}
         </div>
         <div
-          ref={setScrollerNode}
-          className="mx-auto w-full max-w-md snap-y snap-mandatory overflow-y-auto scroll-smooth"
-          style={{ height: scrollerHeight }}
+          className="mx-auto flex w-full max-w-md flex-col px-2"
+          style={{ minHeight: scrollerHeight }}
         >
           {loading ? (
-            <div className="snap-start snap-always h-full p-1">
-              <div className="flex h-full items-center justify-center">
-                <DatingCardSkeleton className="h-full max-h-full" />
-              </div>
+            <div className="flex flex-1 items-center justify-center py-6">
+              <DatingCardSkeleton className="h-full max-h-[520px] w-full" />
             </div>
           ) : !hasAny ? (
-            <div className="snap-start snap-always h-full px-4">
-              <div className="flex h-full flex-col items-center justify-center text-center">
-                <p className="mb-4 text-sm text-gray-500">
-                  No dating profiles yet. Be the first to create one!
-                </p>
-                <button
-                  type="button"
-                  onClick={() => navigate("/dating-profile/create")}
-                  className="inline-flex items-center justify-center rounded-lg bg-red-500 px-4 py-2.5 font-semibold text-white shadow transition hover:bg-red-600"
-                >
-                  Create Dating Profile
-                </button>
-              </div>
+            <div className="flex flex-1 flex-col items-center justify-center text-center">
+              <p className="mb-4 text-sm text-gray-500">
+                No dating profiles yet. Be the first to create one!
+              </p>
+              <button
+                type="button"
+                onClick={() => navigate("/dating-profile/create")}
+                className="inline-flex items-center justify-center rounded-lg bg-red-500 px-4 py-2.5 font-semibold text-white shadow transition hover:bg-red-600"
+              >
+                Create Dating Profile
+              </button>
+            </div>
+          ) : currentIndex < 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center text-center">
+              <p className="text-sm text-gray-500">
+                You&apos;re all caught up for now. Check back soon!
+              </p>
             </div>
           ) : (
             <>
-              {renderedProfiles.map((p: DatingProfile, index) => {
-                const normalizePhotoSrc = (value: unknown): string => {
-                  if (typeof value !== "string") return "";
-                  const trimmed = value.trim();
-                  return trimmed.length ? trimmed : "";
-                };
-                const primaryPhotoSrc =
-                  normalizePhotoSrc(p.photoUrl) || normalizePhotoSrc(p.photo);
-                const galleryPhotos = Array.isArray(p.photos)
-                  ? p.photos.map(normalizePhotoSrc).filter((src) => src)
-                  : [];
-                const orderedPhotos: string[] = [];
-                if (primaryPhotoSrc) {
-                  orderedPhotos.push(primaryPhotoSrc);
-                }
-                for (const src of galleryPhotos) {
-                  if (!orderedPhotos.includes(src)) {
-                    orderedPhotos.push(src);
-                  }
-                }
-                const imageUrl = orderedPhotos[0] || "/placeholder.jpg";
-                const photosArr = orderedPhotos;
-                const uname = p.username;
-                const normalizedName = normalizeUsername(uname) || "profile";
-                const firstNameValue =
-                  (typeof p.firstName === "string" && p.firstName.trim()) ||
-                  (typeof p.displayName === "string" && p.displayName.trim()) ||
-                  "";
-                const profileUserId =
-                  typeof p.userId === "string" ? p.userId : "";
-                const profileKey = [
-                  profileUserId || normalizedName,
-                  p.updatedAt ?? p.createdAt ?? "",
-                  index,
-                ].join("::");
-                const liked = !!byUser[uname.toLowerCase()]?.outgoing;
-                const cityValue = p.location?.city?.trim() || "";
-                const stateValue = p.location?.state?.trim() || "";
-                const countryValue = p.location?.country?.trim() || "";
-                const fallbackLocation =
-                  p.location?.formatted?.trim() ||
-                  [countryValue, stateValue, cityValue]
-                    .filter((part) => part.length > 0)
-                    .join(", ") ||
-                  "";
-                const distanceMeters = calculateDistanceMeters(
-                  myLocation,
-                  p.location ?? null
-                );
+              <div
+                className="relative flex-1 py-4"
+                style={{ minHeight: "420px" }}
+              >
+                {profiles.map((p: DatingProfile, index) => {
+                  if (index > currentIndex) return null;
 
-                return (
-                  <section
-                    key={profileKey}
-                    className="snap-start snap-always h-full p-1"
-                  >
-                    <div className="flex h-full items-center justify-center">
-                      <DatingCard
-                        firstName={firstNameValue}
-                        username={uname}
-                        age={p.age}
-                        status={p.mood || ""}
-                        imageUrl={imageUrl}
-                        photos={photosArr}
-                        city={cityValue}
-                        state={stateValue}
-                        country={countryValue}
-                        locationLabel={fallbackLocation}
-                        liked={liked}
-                        className="h-full max-h-full"
-                        distanceMeters={distanceMeters ?? null}
-                        distanceUnit={distanceUnit}
-                        matchPercentage={p.matchPercentage ?? null}
-                        interceptLike={() => {
-                          if (!hasMyProfile) {
-                            setShowLikeGate(true);
-                            return true;
-                          }
-                          return false;
+                  const stackPosition = currentIndex - index;
+                  const depth = Math.min(stackPosition, 3);
+                  const scale =
+                    stackPosition === 0 ? 1 : Math.max(0.9, 1 - depth * 0.04);
+                  const translateY = stackPosition === 0 ? 0 : depth * 14;
+                  const opacity =
+                    stackPosition === 0 ? 1 : Math.max(0.5, 1 - depth * 0.08);
+                  const isTop = stackPosition === 0;
+                  const isLeaving = leavingCard?.index === index;
+
+                  const normalizePhotoSrc = (value: unknown): string => {
+                    if (typeof value !== "string") return "";
+                    const trimmed = value.trim();
+                    return trimmed.length ? trimmed : "";
+                  };
+                  const primaryPhotoSrc =
+                    normalizePhotoSrc(p.photoUrl) || normalizePhotoSrc(p.photo);
+                  const galleryPhotos = Array.isArray(p.photos)
+                    ? p.photos.map(normalizePhotoSrc).filter((src) => src)
+                    : [];
+                  const orderedPhotos: string[] = [];
+                  if (primaryPhotoSrc) {
+                    orderedPhotos.push(primaryPhotoSrc);
+                  }
+                  for (const src of galleryPhotos) {
+                    if (!orderedPhotos.includes(src)) {
+                      orderedPhotos.push(src);
+                    }
+                  }
+                  const imageUrl = orderedPhotos[0] || "/placeholder.jpg";
+                  const photosArr = orderedPhotos;
+                  const uname = p.username || "";
+                  const trimmedUsername = normalizeUsername(uname);
+                  const normalizedName = trimmedUsername || "profile";
+                  const lowerKey = trimmedUsername
+                    ? trimmedUsername.toLowerCase()
+                    : "";
+                  const firstNameValue =
+                    (typeof p.firstName === "string" && p.firstName.trim()) ||
+                    (typeof p.displayName === "string" &&
+                      p.displayName.trim()) ||
+                    "";
+                  const profileUserId =
+                    typeof p.userId === "string" ? p.userId : "";
+                  const profileKey = [
+                    profileUserId || normalizedName,
+                    p.updatedAt ?? p.createdAt ?? "",
+                    index,
+                  ].join("::");
+                  const liked = lowerKey ? !!byUser[lowerKey]?.outgoing : false;
+                  const cityValue = p.location?.city?.trim() || "";
+                  const stateValue = p.location?.state?.trim() || "";
+                  const countryValue = p.location?.country?.trim() || "";
+                  const fallbackLocation =
+                    p.location?.formatted?.trim() ||
+                    [countryValue, stateValue, cityValue]
+                      .filter((part) => part.length > 0)
+                      .join(", ") ||
+                    "";
+                  const distanceMeters = calculateDistanceMeters(
+                    myLocation,
+                    p.location ?? null
+                  );
+
+                  const zIndex = Math.max(1, 1000 - stackPosition);
+
+                  const transformParts: string[] = [];
+                  if (!isTop) {
+                    transformParts.push(`scale(${scale})`);
+                    transformParts.push(`translateY(${translateY}px)`);
+                  }
+
+                  let cardOpacity = opacity;
+                  if (isTop) {
+                    if (isLeaving && leavingCard) {
+                      const exitX =
+                        leavingCard.direction === "right" ? 640 : -640;
+                      const exitRotate =
+                        leavingCard.direction === "right" ? 22 : -22;
+                      transformParts.push(`translate(${exitX}px, -60px)`);
+                      transformParts.push(`rotate(${exitRotate}deg)`);
+                      cardOpacity = 0;
+                    } else if (dragState.isDragging) {
+                      const dragY = dragState.offsetX * -0.04;
+                      const rotation = dragState.offsetX * 0.08;
+                      transformParts.push(
+                        `translate(${dragState.offsetX}px, ${dragY}px)`
+                      );
+                      transformParts.push(`rotate(${rotation}deg)`);
+                      cardOpacity = Math.max(
+                        0.65,
+                        1 - Math.min(Math.abs(dragState.offsetX) / 600, 0.35)
+                      );
+                    }
+                  }
+
+                  const transform = transformParts.join(" ") || undefined;
+                  const transition =
+                    isTop && dragState.isDragging && !isLeaving
+                      ? "none"
+                      : "transform 0.32s ease-out, opacity 0.32s ease-out";
+
+                  const handlerProps:
+                    | SwipeableHandlers
+                    | Record<string, never> =
+                    isTop && !isLeaving ? swipeHandlers : {};
+
+                  return (
+                    <div
+                      key={profileKey}
+                      className="absolute inset-0 flex items-center justify-center"
+                      style={{
+                        zIndex,
+                        pointerEvents: isTop && !isLeaving ? "auto" : "none",
+                      }}
+                    >
+                      <div
+                        className="h-full w-full"
+                        style={{
+                          transform,
+                          opacity: cardOpacity,
+                          transition,
+                          touchAction: isTop ? "pan-y" : "none",
                         }}
-                        onLike={() => likeMut.mutate(uname)}
-                        onUnlike={() => unlikeMut.mutate(uname)}
-                        onOpenProfile={() => {
-                          const profileId = profileUserId;
-                          const isOwner =
-                            Boolean(authUserIdValue) &&
-                            Boolean(profileId) &&
-                            profileId === authUserIdValue;
-                          const nextPath =
-                            !isOwner && profileId
-                              ? `/dating-profile/${encodeURIComponent(
-                                  profileId
-                                )}`
-                              : "/dating-profile";
-                          navigate(nextPath, {
-                            state: {
-                              profile: p,
-                              allowEdit: isOwner,
-                              hideTitle: !isOwner,
-                              preview: !isOwner,
-                            },
-                          });
-                        }}
-                      />
+                        {...handlerProps}
+                      >
+                        <DatingCard
+                          firstName={firstNameValue}
+                          username={uname}
+                          age={p.age}
+                          status={p.mood || ""}
+                          imageUrl={imageUrl}
+                          photos={photosArr}
+                          city={cityValue}
+                          state={stateValue}
+                          country={countryValue}
+                          locationLabel={fallbackLocation}
+                          liked={liked}
+                          className="h-full max-h-full"
+                          distanceMeters={distanceMeters ?? null}
+                          distanceUnit={distanceUnit}
+                          matchPercentage={p.matchPercentage ?? null}
+                          interceptLike={() => {
+                            if (!hasMyProfile) {
+                              setShowLikeGate(true);
+                              return true;
+                            }
+                            return false;
+                          }}
+                          onLike={() => {
+                            if (isTop) {
+                              triggerSwipe("right");
+                              return;
+                            }
+                            handleLike(p);
+                          }}
+                          onUnlike={() => {
+                            if (!uname) return;
+                            unlikeMut.mutate(uname);
+                          }}
+                          onOpenProfile={() => {
+                            const profileId = profileUserId;
+                            const isOwner =
+                              Boolean(authUserIdValue) &&
+                              Boolean(profileId) &&
+                              profileId === authUserIdValue;
+                            const nextPath =
+                              !isOwner && profileId
+                                ? `/dating-profile/${encodeURIComponent(
+                                    profileId
+                                  )}`
+                                : "/dating-profile";
+                            navigate(nextPath, {
+                              state: {
+                                profile: p,
+                                allowEdit: isOwner,
+                                hideTitle: !isOwner,
+                                preview: !isOwner,
+                              },
+                            });
+                          }}
+                        />
+                      </div>
                     </div>
-                  </section>
-                );
-              })}
-              {loadingMore && (
-                <div className="snap-start snap-always h-full p-1">
-                  <div className="flex h-full items-center justify-center">
-                    <DatingCardSkeleton className="h-full max-h-full" />
-                  </div>
-                </div>
-              )}
-              {hasMore && <div ref={loadMoreRef} className="h-1" aria-hidden />}
+                  );
+                })}
+              </div>
             </>
           )}
         </div>

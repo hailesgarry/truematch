@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from ..db import get_db
+from ..db.mongo import ensure_likes_indexes
 from ..cache import cache as local_cache
 from ..cache_bus import publish_invalidate
 from ..collections import GROUP_MESSAGES_COLLECTION, DM_MESSAGES_COLLECTION
@@ -30,8 +31,7 @@ async def ensure_indexes():
     await db[DM_MESSAGES_COLLECTION].create_index([("groupId", 1), ("createdAt", -1)])
 
     # Likes: incoming/outgoing queries
-    await db["likes"].create_index([("toLc", 1), ("at", -1)])
-    await db["likes"].create_index([("fromLc", 1), ("at", -1)])
+    await ensure_likes_indexes(db)
 
     # Message filters per user/group/username
     try:

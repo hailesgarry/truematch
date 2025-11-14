@@ -630,6 +630,153 @@ export const fetchProfilesByUserIds = async (
   return fetchDatingProfilesBatch({ userIds });
 };
 
+type LikesReceivedApiResponse = {
+  liked_me?: Array<{
+    user_id?: string | null;
+    username?: string | null;
+    name?: string | null;
+    avatar?: string | null;
+    liked_at?: number | string | null;
+  }>;
+};
+
+type MatchesApiResponse = {
+  matches?: Array<{
+    user_id?: string | null;
+    username?: string | null;
+    name?: string | null;
+    avatar?: string | null;
+    liked_at?: number | string | null;
+    matched_at?: number | string | null;
+  }>;
+};
+
+const toEpochMillis = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric)) return Math.trunc(numeric);
+    const parsed = Date.parse(trimmed);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return null;
+};
+
+export type LikeSummary = {
+  userId: string;
+  username?: string;
+  name?: string;
+  avatar?: string | null;
+  likedAt?: number | null;
+  matchedAt?: number | null;
+};
+
+const normalizeLikeSummary = (raw: any): LikeSummary | null => {
+  if (!raw || typeof raw !== "object") return null;
+  const rawUserId = typeof raw.user_id === "string" ? raw.user_id.trim() : "";
+  const rawUsername =
+    typeof raw.username === "string" ? raw.username.trim() : "";
+  const fallbackId = rawUserId || rawUsername;
+  if (!fallbackId) return null;
+  const likedAt = toEpochMillis(raw.liked_at);
+  const matchedAt = toEpochMillis(raw.matched_at);
+  const name = typeof raw.name === "string" ? raw.name.trim() : "";
+  const avatar = typeof raw.avatar === "string" ? raw.avatar.trim() : "";
+  return {
+    userId: fallbackId,
+    username: rawUsername || undefined,
+    name: name || undefined,
+    avatar: avatar || null,
+    likedAt: likedAt ?? null,
+    matchedAt: matchedAt ?? null,
+  };
+};
+
+export type LikeActionResponse = {
+  status: "ok";
+  isMatch: boolean;
+};
+
+export type LikeRemovalResponse = {
+  status: "ok";
+  removed: boolean;
+};
+
+export async function fetchLikesReceived(
+  token: string,
+  options?: { signal?: AbortSignal }
+): Promise<LikeSummary[]> {
+  const auth = token?.trim();
+  if (!auth) throw new Error("auth token required");
+  const res = await pythonApi.get<LikesReceivedApiResponse>("/likes/me", {
+    headers: { Authorization: `Bearer ${auth}` },
+    signal: options?.signal,
+  });
+  const list = Array.isArray(res.data?.liked_me) ? res.data.liked_me : [];
+  return list
+    .map((item) => normalizeLikeSummary(item))
+    .filter((item): item is LikeSummary => Boolean(item));
+}
+
+export async function fetchMatches(
+  token: string,
+  options?: { signal?: AbortSignal }
+): Promise<LikeSummary[]> {
+  const auth = token?.trim();
+  if (!auth) throw new Error("auth token required");
+  const res = await pythonApi.get<MatchesApiResponse>("/likes/matches", {
+    headers: { Authorization: `Bearer ${auth}` },
+    signal: options?.signal,
+  });
+  const list = Array.isArray(res.data?.matches) ? res.data.matches : [];
+  return list
+    .map((item) => normalizeLikeSummary(item))
+    .filter((item): item is LikeSummary => Boolean(item));
+}
+
+export async function createDatingLike(
+  targetUserId: string,
+  token: string
+): Promise<LikeActionResponse> {
+  const trimmed = targetUserId?.trim();
+  if (!trimmed) throw new Error("target_user_id is required");
+  const auth = token?.trim();
+  if (!auth) throw new Error("auth token required");
+  const res = await pythonApi.post<{ status?: string; is_match?: boolean }>(
+    "/likes",
+    { target_user_id: trimmed },
+    { headers: { Authorization: `Bearer ${auth}` } }
+  );
+  return {
+    status: res.data?.status === "ok" ? "ok" : "ok",
+    isMatch: Boolean(res.data?.is_match),
+  };
+}
+
+export async function deleteDatingLike(
+  targetUserId: string,
+  token: string
+): Promise<LikeRemovalResponse> {
+  const trimmed = targetUserId?.trim();
+  if (!trimmed) throw new Error("target_user_id is required");
+  const auth = token?.trim();
+  if (!auth) throw new Error("auth token required");
+  const res = await pythonApi.delete<{ status?: string; removed?: boolean }>(
+    `/likes/${encodeURIComponent(trimmed)}`,
+    {
+      headers: { Authorization: `Bearer ${auth}` },
+    }
+  );
+  return {
+    status: res.data?.status === "ok" ? "ok" : "ok",
+    removed: Boolean(res.data?.removed),
+  };
+}
+
 // Ensure save includes location transparently
 export async function saveDatingProfile(
   profile: DatingProfileUpsert
