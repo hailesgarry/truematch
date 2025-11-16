@@ -89,7 +89,8 @@ const deriveEntryKey = (
 
 const profileFromHint = (
   hint: DatingLikeProfile | null | undefined,
-  fallbackUsername: string
+  fallbackUsername: string,
+  fallbackUserId?: string | null
 ): DatingProfile => {
   const safeUsername = (hint?.username || fallbackUsername || "").trim();
   const username = safeUsername || fallbackUsername;
@@ -113,7 +114,15 @@ const profileFromHint = (
     )
   );
 
+  const normalizedUserId =
+    normalizeIdentifier(hint?.userId) ||
+    normalizeIdentifier(fallbackUserId) ||
+    normalizeIdentifier(hint?.username) ||
+    normalizeIdentifier(username) ||
+    username;
+
   const profile: DatingProfile = {
+    userId: normalizedUserId,
     username,
   };
 
@@ -181,9 +190,16 @@ const resolveProfileForEntry = (
     if (fallback) return fallback;
   }
   if (entry.profileHint) {
-    return profileFromHint(entry.profileHint, entry.username);
+    return profileFromHint(entry.profileHint, entry.username, entry.userId);
   }
-  const fallback: DatingProfile = { username: entry.username };
+  const normalizedUserId =
+    normalizeIdentifier(entry.userId) ||
+    normalizeIdentifier(entry.username) ||
+    entry.username;
+  const fallback: DatingProfile = {
+    userId: normalizedUserId,
+    username: entry.username,
+  };
   if (entry.displayName) {
     fallback.displayName = entry.displayName;
     if (!fallback.firstName) fallback.firstName = entry.displayName;
@@ -942,10 +958,12 @@ const MatchesPage: React.FC = () => {
   const handleOpenLikedProfile = useCallback(
     (profile: DatingProfile) => {
       if (!profile) return;
-      const target = (profile.username || "").trim();
-      if (!target) return;
+      const targetId =
+        (typeof profile.userId === "string" && profile.userId.trim()) ||
+        (typeof profile.username === "string" && profile.username.trim());
+      if (!targetId) return;
       scrollRestorationRef.current?.save();
-      navigate(`/matches/liked-me/${encodeURIComponent(target)}`, {
+      navigate(`/matches/liked-me/${encodeURIComponent(targetId)}`, {
         state: { profile },
       });
     },
@@ -977,13 +995,24 @@ const MatchesPage: React.FC = () => {
   useEffect(() => {
     const next = likedMeProfiles.slice(0, PAGE_SIZE);
     setVisibleLikes((prev) => {
-      if (
+      const isSame =
         prev.length === next.length &&
-        prev.every(
-          (profile, index) => profile?.username === next[index]?.username
-        )
-      )
-        return prev;
+        prev.every((profile, index) => {
+          const currentId =
+            (typeof profile?.userId === "string" && profile.userId.trim()) ||
+            (typeof profile?.username === "string" &&
+              profile.username.trim()) ||
+            "";
+          const nextProfile = next[index];
+          const nextId =
+            (typeof nextProfile?.userId === "string" &&
+              nextProfile.userId.trim()) ||
+            (typeof nextProfile?.username === "string" &&
+              nextProfile.username.trim()) ||
+            "";
+          return currentId === nextId;
+        });
+      if (isSame) return prev;
       return next;
     });
     setLikesNext((prev) => {
@@ -1131,20 +1160,34 @@ const MatchesPage: React.FC = () => {
                 <div className="max-w-md mx-auto px-4 mt-4">
                   <div className="grid grid-cols-2 gap-3">
                     {visibleLikes.map((profile, index) => {
-                      const name = (profile?.username || "").trim();
-                      if (!name) return null;
+                      const targetId =
+                        (typeof profile?.userId === "string" &&
+                          profile.userId.trim()) ||
+                        (typeof profile?.username === "string" &&
+                          profile.username.trim()) ||
+                        "";
+                      if (!targetId) return null;
+                      const name =
+                        (typeof profile?.username === "string" &&
+                          profile.username.trim()) ||
+                        targetId;
                       const firstNameValue =
                         (typeof profile?.firstName === "string" &&
                           profile.firstName.trim()) ||
                         (typeof profile?.displayName === "string" &&
                           profile.displayName.trim()) ||
                         "";
+                      const primaryPhotoUrl =
+                        typeof profile?.primaryPhotoUrl === "string" &&
+                        profile.primaryPhotoUrl.trim()
+                          ? profile.primaryPhotoUrl.trim()
+                          : null;
                       const photosToUse = collectDatingPhotos(profile);
                       const imageForAvatar =
                         photosToUse[0] ?? "/placeholder.jpg";
                       return (
                         <LikeCard
-                          key={`liked-${name}-${index}`}
+                          key={`liked-${targetId}-${index}`}
                           username={name}
                           firstName={firstNameValue || null}
                           age={
@@ -1152,6 +1195,7 @@ const MatchesPage: React.FC = () => {
                               ? profile.age
                               : null
                           }
+                          primaryPhotoUrl={primaryPhotoUrl}
                           photos={photosToUse}
                           imageUrl={imageForAvatar}
                           onOpenProfile={() => handleOpenLikedProfile(profile)}

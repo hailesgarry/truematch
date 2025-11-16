@@ -87,8 +87,17 @@ const MatchesCard: React.FC<MatchesCardProps> = ({
       ) : (
         <div className="flex gap-3 overflow-x-auto">
           {items.map((profile, index) => {
-            const username = (profile?.username || "").trim();
-            if (!username) return null;
+            const identifier =
+              (typeof profile?.userId === "string" && profile.userId.trim()) ||
+              (typeof profile?.username === "string" &&
+                profile.username.trim()) ||
+              "";
+            if (!identifier) return null;
+
+            const username =
+              (typeof profile?.username === "string" &&
+                profile.username.trim()) ||
+              identifier;
 
             const displayName =
               (typeof profile?.firstName === "string" &&
@@ -116,7 +125,7 @@ const MatchesCard: React.FC<MatchesCardProps> = ({
 
             return (
               <button
-                key={`${username}-${index}`}
+                key={`${identifier}-${index}`}
                 type="button"
                 onClick={handleClick}
                 className="flex w-[5rem] flex-shrink-0 flex-col items-center focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"

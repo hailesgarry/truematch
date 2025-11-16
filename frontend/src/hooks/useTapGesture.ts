@@ -10,6 +10,7 @@ type Options = {
   moveTolerancePx?: number;
   stopPropagation?: boolean;
   preventDefault?: boolean;
+  capturePointer?: boolean;
 };
 
 /**
@@ -29,6 +30,7 @@ export function useTapGesture(options: Options) {
     moveTolerancePx = 10,
     stopPropagation = true,
     preventDefault = false,
+    capturePointer = true,
   } = options;
 
   const startX = React.useRef(0);
@@ -93,9 +95,11 @@ export function useTapGesture(options: Options) {
     }
 
     // capture to receive move/up even if cursor leaves
-    try {
-      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-    } catch {}
+    if (capturePointer) {
+      try {
+        (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+      } catch {}
+    }
   };
 
   const onPointerMove = (e: React.PointerEvent) => {

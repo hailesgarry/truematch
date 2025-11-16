@@ -4,12 +4,15 @@ import {
   type LinkPreviewData,
 } from "../../hooks/useLinkPreview";
 import { getHostFromUrl } from "../../utils/links";
+import { PREVIEW_SURFACE_CLASSES } from "./previewSurfaceClasses";
 
 export const LinkPreviewSkeleton: React.FC<{ className?: string }> = ({
   className,
 }) => {
   const classes = [
-    "flex w-full max-w-full min-w-0 overflow-hidden rounded-xl border border-white/40 bg-white/60 text-left shadow-sm backdrop-blur-sm",
+    "rounded-xl",
+    PREVIEW_SURFACE_CLASSES,
+    "flex w-full max-w-full min-w-0 overflow-hidden text-left",
     "animate-pulse",
     className,
   ]
@@ -66,7 +69,9 @@ const LinkPreviewCard: React.FC<Props> = ({ url, className, data }) => {
   );
 
   const classes = [
-    "group flex w-full max-w-full min-w-0 overflow-hidden rounded-xl border border-white/40 bg-white/60 text-left shadow-sm transition backdrop-blur-sm",
+    "group flex w-full max-w-full min-w-0 overflow-hidden text-left transition",
+    "rounded-xl",
+    PREVIEW_SURFACE_CLASSES,
     className,
   ]
     .filter(Boolean)

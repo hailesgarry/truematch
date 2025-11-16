@@ -42,7 +42,7 @@ import type {
 import { datingProfilesKey } from "../../hooks/useDatingProfilesQuery";
 import { broadcastMessage } from "../../lib/broadcast";
 
-type DatingProfilePatch = Partial<Omit<DatingProfileUpsert, "username">>;
+type DatingProfilePatch = Partial<Omit<DatingProfileUpsert, "userId">>;
 
 type ChildrenSelection = {
   choice: string;
@@ -3331,7 +3331,7 @@ const EditDatingProfileProfile: React.FC = () => {
         onSuccessCallback?: (profile: DatingProfile) => void;
       } = {}
     ) => {
-      if (!username) {
+      if (!userId) {
         showToast("Sign in to edit your profile.", 2500, "error");
         return;
       }
@@ -3345,19 +3345,28 @@ const EditDatingProfileProfile: React.FC = () => {
       }
       try {
         const variables: DatingProfileUpsert = {
-          username,
+          userId,
           ...patch,
         };
         const profile = await updateProfileMutation.mutateAsync(variables);
         const profileUserId =
           typeof profile.userId === "string" ? profile.userId.trim() : "";
-        const usernameLower = username.toLowerCase();
+        const normalizedUsername = (username ?? "").trim();
+        const usernameLower = normalizedUsername.toLowerCase();
         const usernameQueryKey = `username:${usernameLower}`;
         if (profileUserId) {
           queryClient.setQueryData(["datingProfile", profileUserId], profile);
         }
-        queryClient.setQueryData(["datingProfile", username], profile);
-        queryClient.setQueryData(["datingProfile", usernameQueryKey], profile);
+        if (normalizedUsername) {
+          queryClient.setQueryData(
+            ["datingProfile", normalizedUsername],
+            profile
+          );
+          queryClient.setQueryData(
+            ["datingProfile", usernameQueryKey],
+            profile
+          );
+        }
         broadcastDatingProfileUpdate(profile);
         options.onSuccessCallback?.(profile);
         if (options.successMessage) {
@@ -3376,12 +3385,14 @@ const EditDatingProfileProfile: React.FC = () => {
       }
     },
     [
+      userId,
       username,
       showToast,
       updateProfileMutation,
       queryClient,
       openSuccessToast,
       broadcastDatingProfileUpdate,
+      broadcastMessage,
     ]
   );
 

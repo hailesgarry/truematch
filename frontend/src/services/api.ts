@@ -547,14 +547,10 @@ export const uploadAvatar = async (
 // Dating APIs
 export const fetchDatingProfiles = async (options?: {
   timeoutMs?: number;
-  viewer?: string;
 }): Promise<DatingProfile[]> => {
   const timeoutMs = options?.timeoutMs ?? 8000;
-  const viewer =
-    typeof options?.viewer === "string" ? options.viewer : undefined;
   const res = await pythonApi.get<DatingProfile[]>("/dating/profiles", {
     timeout: timeoutMs,
-    params: viewer ? { viewer } : undefined,
   });
   return res.data || [];
 };
@@ -612,10 +608,23 @@ export const fetchDatingProfile = async (
     return null;
   }
 
-  const list = await fetchDatingProfilesBatch(
-    userId ? { userIds: [userId] } : { usernames: [username] }
-  );
-  return list[0] || null;
+  if (userId) {
+    const byId = await fetchDatingProfilesBatch({ userIds: [userId] });
+    if (byId.length > 0) {
+      return byId[0] || null;
+    }
+  }
+
+  if (username) {
+    const byUsername = await fetchDatingProfilesBatch({
+      usernames: [username],
+    });
+    if (byUsername.length > 0) {
+      return byUsername[0] || null;
+    }
+  }
+
+  return null;
 };
 
 export const fetchProfilesByUsernames = async (
@@ -823,22 +832,46 @@ export async function saveDatingProfile(
   return res.data;
 }
 
+export async function fetchDatingProfilePhotos(
+  userId: string
+): Promise<DatingProfile> {
+  const trimmed = userId?.trim();
+  if (!trimmed) throw new Error("userId is required");
+  const res = await pythonApi.get<DatingProfile>(
+    `/dating/profile/${encodeURIComponent(trimmed)}/photos`
+  );
+  return res.data;
+}
+
+export async function updateDatingProfilePhotos(
+  userId: string,
+  photos: string[]
+): Promise<DatingProfile> {
+  const trimmed = userId?.trim();
+  if (!trimmed) throw new Error("userId is required");
+  const res = await pythonApi.post<DatingProfile>(
+    `/dating/profile/${encodeURIComponent(trimmed)}/photos`,
+    { photos }
+  );
+  return res.data;
+}
+
 export async function deleteDatingProfile(
-  username: string
+  userId: string
 ): Promise<{ success: true }> {
   const res = await pythonApi.delete<{ success: true }>(
-    `/dating/profile/${encodeURIComponent(username)}`
+    `/dating/profile/${encodeURIComponent(userId)}`
   );
   return res.data;
 }
 
 // Delete a single photo from user's dating profile; returns updated profile
 export async function removeDatingPhoto(
-  username: string,
+  userId: string,
   url: string
 ): Promise<DatingProfile> {
   const res = await pythonApi.delete<DatingProfile>(
-    `/dating/profile/${encodeURIComponent(username)}/photo`,
+    `/dating/profile/${encodeURIComponent(userId)}/photo`,
     { params: { url } }
   );
   return res.data;

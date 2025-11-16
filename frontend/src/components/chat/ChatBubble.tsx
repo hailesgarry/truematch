@@ -1,6 +1,4 @@
 import React from "react";
-
-const NEUTRAL_BUBBLE_BORDER = "#e2e8f0";
 import { useTapGesture } from "../../hooks/useTapGesture";
 import type { Message, MessageMedia } from "../../types";
 import type { MediaPreviewMeta } from "../common/MediaUpload";
@@ -78,6 +76,8 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
 }) => {
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   const enableGestures = Boolean(openActionsFor);
+  const chatMsg = m as any;
+  const isAudioMessage = Boolean(chatMsg?.kind === "audio" && chatMsg.audio);
 
   const updatePressState = React.useCallback(
     (_next: "idle" | "pressing" | "activated") => {},
@@ -140,6 +140,7 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
     moveTolerancePx: 10,
     stopPropagation: true,
     preventDefault: false,
+    capturePointer: !isAudioMessage,
   });
 
   const pressHandlers: React.HTMLAttributes<HTMLElement> = {
@@ -172,10 +173,9 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
 
   const pressMotionClass = "";
 
-  const chatMsg = m as any;
-  const isDeleted = Boolean((m as any).deleted || (m as any).deletedAt);
-  const structuredGif = (m as any).kind === "gif" && (m as any).media;
-  const audioMsg = (m as any).kind === "audio" && (m as any).audio;
+  const isDeleted = Boolean(chatMsg.deleted || chatMsg.deletedAt);
+  const structuredGif = chatMsg.kind === "gif" && chatMsg.media;
+  const audioMsg = isAudioMessage ? chatMsg.audio : null;
   const trimmed = (m.text || "").trim();
   const singleGifUrl =
     trimmed &&
@@ -184,14 +184,10 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
     !trimmed.includes(" ");
   const emojiOnly = typeof m.text === "string" && m.text.match(/^\p{Emoji}+$/u);
   const { bg, fg } = colors;
-  const neutralBorderEligible = typeof bg === "string" && !/gradient/i.test(bg);
   const bubbleStyle = React.useMemo(() => {
     const style: React.CSSProperties = { background: bg, color: fg };
-    if (neutralBorderEligible) {
-      style.border = `1px solid ${NEUTRAL_BUBBLE_BORDER}`;
-    }
     return style;
-  }, [bg, fg, neutralBorderEligible]);
+  }, [bg, fg]);
 
   const replyPreview = chatMsg.replyTo ? (
     <ReplyPreview
@@ -206,9 +202,24 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
     />
   ) : null;
 
+  const dividerColor =
+    typeof fg === "string" && fg.toLowerCase() === "#ffffff"
+      ? "rgba(255, 255, 255, 0.35)"
+      : "rgba(15, 23, 42, 0.12)";
+
+  const replySection = replyPreview ? (
+    <div className="w-full">
+      {replyPreview}
+      <div
+        className="h-px w-full my-2 rounded-full"
+        style={{ backgroundColor: dividerColor }}
+      />
+    </div>
+  ) : null;
+
   // Voice note (audio) message
   if (audioMsg) {
-    const audio = (m as any).audio as {
+    const audio = (audioMsg ?? {}) as {
       url: string;
       durationMs?: number;
       uploading?: boolean;
@@ -238,7 +249,7 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
           Double tap to open message actions. Long press to copy and open the
           same actions.
         </span>
-        {replyPreview}
+        {replySection}
         <AudioWave
           url={audio.url}
           loading={Boolean(audio.uploading)}
@@ -296,7 +307,7 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
             Double tap to open message actions. Long press to copy and open the
             same actions.
           </span>
-          {replyPreview}
+          {replySection}
           {mediaEl}
         </div>
       );
@@ -330,7 +341,7 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
             Double tap to open message actions. Long press to copy and open the
             same actions.
           </span>
-          {replyPreview}
+          {replySection}
           <AnimatedMedia url={trimmed} large />
         </div>
       );
@@ -364,7 +375,7 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
             Double tap to open message actions. Long press to copy and open the
             same actions.
           </span>
-          {replyPreview}
+          {replySection}
           <div className="text-4xl sm:text-5xl leading-none">{m.text}</div>
         </div>
       );
@@ -400,7 +411,7 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
           className="w-full py-2 px-2.5 rounded-[20px] break-words transition"
           style={bubbleStyle}
         >
-          {replyPreview}
+          {replySection}
           <MediaMessage
             media={media}
             replyMode
@@ -451,7 +462,7 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
   ].join(" ");
 
   const textClasses = [
-    "break-words whitespace-pre-line leading-tight text-sm",
+    "break-words whitespace-pre-line leading-tight text-sm font-message",
     hasPreview ? "min-w-0" : "",
   ]
     .filter(Boolean)
@@ -472,7 +483,7 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
         Double tap to open message actions. Long press to copy and open the same
         actions.
       </span>
-      {replyPreview}
+      {replySection}
       {previewTarget ? (
         <>
           <LinkPreviewCard url={previewTarget} className="mt-1" />

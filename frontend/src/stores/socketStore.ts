@@ -29,20 +29,23 @@ function isSystemMessage(m: any): boolean {
 }
 
 // Socket base URL: prefer explicit Vite env, else follow API_URL's origin, else localhost
-const SOCKET_URL =
-  (import.meta as any)?.env?.VITE_SOCKET_URL?.toString?.() ||
-  (import.meta as any)?.env?.VITE_NODE_URL?.toString?.() ||
-  (() => {
-    try {
-      const apiOrigin = new URL(API_URL).origin; // may point to Python if VITE_PY_API_URL used
-      // Heuristic: if API_URL points to Python default 8081, prefer 8080 for sockets
-      if (/^http:\/\/localhost:8081$/i.test(apiOrigin))
-        return "http://localhost:8080";
-      return apiOrigin;
-    } catch {
-      return "http://localhost:8080";
-    }
-  })();
+const SOCKET_URL = (() => {
+  const explicit =
+    (import.meta as any)?.env?.VITE_SOCKET_URL?.toString?.() ||
+    (import.meta as any)?.env?.VITE_NODE_URL?.toString?.();
+  if (explicit) return explicit;
+
+  try {
+    const apiOrigin = new URL(API_URL).origin;
+    if (apiOrigin) return apiOrigin;
+  } catch {}
+
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return window.location.origin;
+  }
+
+  return undefined;
+})();
 
 export const useSocketStore = create<SocketState>()((set, get) => {
   const groupSlice = createGroupSocketSlice(set, get);
@@ -65,6 +68,9 @@ export const useSocketStore = create<SocketState>()((set, get) => {
       const { username } = useAuthStore.getState();
       if (!username) return;
       if (socket && isConnected) return;
+
+      console.log("[Socket] Connecting to:", SOCKET_URL);
+      console.log("[Socket] withCredentials:", true);
 
       const newSocket = io(SOCKET_URL, {
         withCredentials: true,

@@ -53,7 +53,7 @@ import ScrollRestoration, {
 // NEW: Large media size threshold (bytes) – used to optionally gate autoplay/loading
 const LARGE_MEDIA_THRESHOLD = 6 * 1024 * 1024; // 6 MB
 
-const PEER_BUBBLE_BG = "#f1f5f9"; // Tailwind slate-100
+const PEER_BUBBLE_BG = "#E9ECEF"; // Tailwind chat-bubble custom color
 const PEER_BUBBLE_FG = "#0f172a"; // Tailwind slate-900
 const SELF_BUBBLE_BG =
   "linear-gradient(to right, #e91e8c 0%, #d41f8e 30%, #ca209e 50%, #c820c8 70%, #b521d4 100%)";
@@ -310,7 +310,7 @@ function tokenizeTextWithGifs(text: string): React.ReactNode[] {
             href={link.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="break-words text-blue-600 underline decoration-blue-400 decoration-1 underline-offset-2 transition hover:text-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+            className="break-words text-blue-700 underline decoration-blue-500 decoration-1 underline-offset-2 transition hover:text-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
           >
             {link.display}
           </a>

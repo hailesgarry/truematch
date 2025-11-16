@@ -47,7 +47,8 @@ type SelectedPhoto = {
 };
 
 type CreateProfileInput = {
-  username: string;
+  userId: string;
+  username?: string;
   relationshipLookingFor: string[];
   location: LocationSelection;
   photos: SelectedPhoto[];
@@ -63,7 +64,7 @@ const OnboardingPage: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const showToast = useUiStore((s) => s.showToast);
-  const { username } = useAuthStore();
+  const { userId, username } = useAuthStore();
 
   const [step, setStep] = useState(0);
   const [photos, setPhotos] = useState<SelectedPhoto[]>([]);
@@ -148,6 +149,7 @@ const OnboardingPage: React.FC = () => {
 
   const mutation = useMutation<DatingProfile, unknown, CreateProfileInput>({
     mutationFn: async ({
+      userId: userIdInput,
       username: user,
       relationshipLookingFor,
       location: loc,
@@ -156,13 +158,21 @@ const OnboardingPage: React.FC = () => {
       profileHeading = "",
       interestedIn: matchPreference = "",
     }) => {
+      const normalizedUserId = userIdInput.trim();
+      if (!normalizedUserId) {
+        throw new Error("userId required");
+      }
+      const normalizedUsername = (user ?? "").trim();
+      if (!normalizedUsername) {
+        throw new Error("username required for photo upload");
+      }
       const uploadedUrls: string[] = [];
       for (let index = 0; index < selectedPhotos.length; index += 1) {
         const item = selectedPhotos[index];
         setUploadStatus(
           `Uploading photo ${index + 1} of ${selectedPhotos.length}...`
         );
-        const { url } = await uploadDatingPhoto(item.file, user);
+        const { url } = await uploadDatingPhoto(item.file, normalizedUsername);
         uploadedUrls.push(url);
       }
 
@@ -183,7 +193,7 @@ const OnboardingPage: React.FC = () => {
         : null;
 
       const profilePayload: DatingProfileUpsert = {
-        username: user,
+        userId: normalizedUserId,
       };
 
       if (uploadedUrls.length) {
@@ -193,7 +203,9 @@ const OnboardingPage: React.FC = () => {
         profilePayload.photos = gallery;
       }
 
-      profilePayload.location = locationPayload;
+      if (locationPayload !== null) {
+        profilePayload.location = locationPayload;
+      }
 
       if (matchPreference.trim()) {
         profilePayload.interestedIn = matchPreference.trim();
@@ -227,12 +239,20 @@ const OnboardingPage: React.FC = () => {
     onSuccess: async (_profile, variables) => {
       setUploadStatus(null);
       showToast("Looking good! Your profile is ready to go.", 3000);
-      await Promise.all([
+      const invalidateTasks: Promise<unknown>[] = [
         queryClient.invalidateQueries({
-          queryKey: ["datingProfile", variables.username],
+          queryKey: ["datingProfile", variables.userId],
         }),
         queryClient.invalidateQueries({ queryKey: datingProfilesKey }),
-      ]);
+      ];
+      if (variables.username) {
+        invalidateTasks.push(
+          queryClient.invalidateQueries({
+            queryKey: ["datingProfile", variables.username],
+          })
+        );
+      }
+      await Promise.all(invalidateTasks);
       broadcastMessage("tm:dating", { type: "dating:invalidate" });
       navigate("/dating", { replace: true });
     },
@@ -393,7 +413,7 @@ const OnboardingPage: React.FC = () => {
       return;
     }
 
-    if (!username) {
+    if (!userId || !username) {
       setError("Sign in to continue setting up your profile.");
       showToast("Sign in to continue", 2500);
       return;
@@ -401,6 +421,7 @@ const OnboardingPage: React.FC = () => {
 
     try {
       await mutation.mutateAsync({
+        userId,
         username,
         relationshipLookingFor:
           toCanonicalRelationshipList(relationshipOptions),

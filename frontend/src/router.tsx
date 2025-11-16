@@ -603,7 +603,7 @@ const router = createBrowserRouter([
             ),
           },
           {
-            path: "matches/liked-me/:username",
+            path: "matches/liked-me/:userId",
             loader: noopLoader,
             element: (
               <PageSuspense>

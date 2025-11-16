@@ -149,7 +149,7 @@ export function tokenizeTextWithGifs(
             href={link.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="break-words text-blue-600 underline decoration-blue-400 decoration-1 underline-offset-2"
+            className="break-words text-blue-700 underline decoration-blue-500 decoration-1 underline-offset-2 transition hover:text-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
           >
             {link.display}
           </a>

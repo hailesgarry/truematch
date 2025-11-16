@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 
-from ..db import get_db
+from ..db import get_dating_db, get_db
+from ..db.collections import DATING_PROFILES_COLLECTION
 from ..models.likes import (
     LikeRemovalResponse,
     LikeRequest,
@@ -52,6 +53,7 @@ async def create_like(
     current_profile: dict = Depends(require_current_profile),
 ):
     db = get_db()
+    dating_db = get_dating_db()
     liker_id = (current_profile.get("userId") or "").strip()
     if not liker_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="profile missing userId")
@@ -63,7 +65,10 @@ async def create_like(
     if liker_id == target_user_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="cannot like yourself")
 
-    target_profile = await db["profiles"].find_one({"userId": target_user_id}, projection={"_id": 1})
+    target_profile = await dating_db[DATING_PROFILES_COLLECTION].find_one(
+        {"userId": target_user_id},
+        projection={"_id": 1},
+    )
     if not target_profile:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="target user not found")
 

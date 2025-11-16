@@ -21,7 +21,7 @@ import {
   deleteDatingLike,
 } from "../services/api";
 import type { DatingProfile } from "../types";
-import { filterProfilesByPreferences } from "../utils/dating";
+import { deriveDatingProfileKey } from "../utils/dating";
 import { useLikesStore } from "../stores/likesStore";
 import Modal from "../components/common/Modal";
 import { useSocketStore } from "../stores/socketStore";
@@ -36,27 +36,47 @@ import DatingCardSkeleton from "../components/common/DatingCardSkeleton";
 import { usePreferencesStore } from "../stores/preferencesStore";
 import { calculateDistanceMeters } from "../utils/distance";
 
-const normalizeUsername = (value: string | null | undefined): string => {
-  if (!value) return "";
-  return value.trim();
+const sanitizeIdentifier = (value?: string | null): string => {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  return trimmed;
+};
+
+const sanitizeUsername = (value?: string | null): string => {
+  return sanitizeIdentifier(value);
+};
+
+const normalizeUsernameKey = (value?: string | null): string => {
+  const trimmed = sanitizeUsername(value);
+  return trimmed.toLowerCase();
+};
+
+const sanitizePhotoSrc = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
 };
 
 const dedupeProfiles = (items: DatingProfile[]): DatingProfile[] => {
   const seen = new Set<string>();
   const unique: DatingProfile[] = [];
   for (const profile of items) {
-    const raw = normalizeUsername(profile?.username);
-    if (!raw) {
-      continue;
-    }
-    const key = raw.toLowerCase();
-    if (seen.has(key)) {
-      continue;
-    }
+    const key = deriveDatingProfileKey(profile);
+    if (!key) continue;
+    if (seen.has(key)) continue;
     seen.add(key);
     unique.push(profile);
   }
   return unique;
+};
+
+const collectLikeKeys = (profile: DatingProfile): string[] => {
+  const keys = new Set<string>();
+  const primaryKey = deriveDatingProfileKey(profile);
+  if (primaryKey) keys.add(primaryKey);
+  const usernameKey = normalizeUsernameKey(profile?.username);
+  if (usernameKey) keys.add(usernameKey);
+  return Array.from(keys);
 };
 
 interface SwipeHistoryEntry {
@@ -73,7 +93,7 @@ type LikeMutationTarget = {
 
 const DatingPage: React.FC = () => {
   const navigate = useNavigate();
-  const { joined, username, userId, token } = useAuthStore();
+  const { joined, userId, token } = useAuthStore();
   const { showToast } = useUiStore();
   const { ensureConnected, likeUser, unlikeUser } = useSocketStore();
   const qc = useQueryClient();
@@ -84,18 +104,8 @@ const DatingPage: React.FC = () => {
   const [profiles, setProfiles] = useState<DatingProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [showDeletedBanner, setShowDeletedBanner] = useState(false);
-  const viewerKey = useMemo(
-    () => (username ? username.trim() : ""),
-    [username]
-  );
-  const profilesQuery = useDatingProfilesQuery(
-    joined,
-    viewerKey ? viewerKey : undefined
-  );
-  const datingQueryKey = useMemo(
-    () => [...datingProfilesKey, viewerKey] as const,
-    [viewerKey]
-  );
+  const profilesQuery = useDatingProfilesQuery(joined);
+  const datingQueryKey = datingProfilesKey;
   // Derive "do I have a profile" reactively
   const { data: meProfile } = useQuery({
     queryKey: ["datingProfile", userId ?? ""],
@@ -122,10 +132,7 @@ const DatingPage: React.FC = () => {
     return Boolean(localProfile?.photo || (localProfile as any)?.mood);
   }, [meProfile, localProfile]);
   const [showLikeGate, setShowLikeGate] = useState(false);
-  const authUserIdValue = useMemo(
-    () => (userId ? userId.trim() : ""),
-    [userId]
-  );
+  const authUserIdValue = useMemo(() => sanitizeIdentifier(userId), [userId]);
 
   const [currentIndex, setCurrentIndex] = useState(-1);
   const currentIndexRef = useRef(currentIndex);
@@ -227,37 +234,10 @@ const DatingPage: React.FC = () => {
     }
     setLoading(false);
     if (profilesQuery.data) {
-      const active = dedupeProfiles(
-        (profilesQuery.data || []).filter((profile) => {
-          if (typeof profile?.hasDatingProfile === "boolean") {
-            return profile.hasDatingProfile;
-          }
-          const fallback = Boolean(
-            (Array.isArray(profile?.photos) && profile.photos.length > 0) ||
-              profile?.photoUrl ||
-              profile?.photo ||
-              profile?.mood ||
-              typeof profile?.age === "number" ||
-              profile?.gender ||
-              profile?.interestedIn
-          );
-          return fallback;
-        })
-      );
-      const withoutSelf = active.filter(
-        (p) =>
-          (p.username || "").toLowerCase() !== (username || "").toLowerCase()
-      );
-      const filtered = dedupeProfiles(
-        filterProfilesByPreferences(withoutSelf, username)
-      );
-      const withPhoto = filtered.filter(
-        (p) =>
-          (Array.isArray(p.photos) && p.photos.length > 0) ||
-          p.photoUrl ||
-          p.photo
-      );
-      setProfiles(dedupeProfiles(withPhoto.length ? withPhoto : filtered));
+      const rawProfiles = Array.isArray(profilesQuery.data)
+        ? profilesQuery.data
+        : [];
+      setProfiles(dedupeProfiles(rawProfiles));
     } else if (profilesQuery.isError) {
       console.error("Failed to load dating profiles:", profilesQuery.error);
       showToast("Dating is temporarily unavailable.", 2500);
@@ -265,7 +245,6 @@ const DatingPage: React.FC = () => {
   }, [
     joined,
     navigate,
-    username,
     profilesQuery.isLoading,
     profilesQuery.data,
     profilesQuery.isError,
@@ -341,10 +320,9 @@ const DatingPage: React.FC = () => {
 
   const handleLike = useCallback(
     (profile: DatingProfile) => {
-      const uname = normalizeUsername(profile?.username);
+      const uname = sanitizeUsername(profile?.username);
       if (!uname) return;
-      const targetUserId =
-        typeof profile?.userId === "string" ? profile.userId.trim() : null;
+      const targetUserId = sanitizeIdentifier(profile?.userId) || null;
       likeMut.mutate({ username: uname, userId: targetUserId, profile });
     },
     [likeMut]
@@ -417,12 +395,9 @@ const DatingPage: React.FC = () => {
       resetDragState();
       updateCurrentIndex(last.index);
       if (last.direction === "right") {
-        const uname = normalizeUsername(last.profile?.username);
+        const uname = sanitizeUsername(last.profile?.username);
         if (uname) {
-          const targetUserId =
-            typeof last.profile?.userId === "string"
-              ? last.profile.userId.trim()
-              : null;
+          const targetUserId = sanitizeIdentifier(last.profile?.userId) || null;
           unlikeMut.mutate({ username: uname, userId: targetUserId });
         }
       }
@@ -482,7 +457,16 @@ const DatingPage: React.FC = () => {
     const cards = (profiles || []).slice(0, 6);
     if (cards.length === 0) return;
     const urls = cards
-      .map((p: any) => p.photo || p.avatar || p.imageUrl)
+      .map(
+        (p: any) =>
+          p.primaryPhotoUrl ||
+          p.photoUrl ||
+          p.photo ||
+          (Array.isArray(p.photos) ? p.photos[0] : null) ||
+          p.profileAvatarUrl ||
+          p.avatar ||
+          p.imageUrl
+      )
       .filter(Boolean) as string[];
     if (urls.length === 0) return;
     decodedOnceRef.current = true;
@@ -491,7 +475,16 @@ const DatingPage: React.FC = () => {
     scheduleIdle(() => {
       const next = (profiles || [])
         .slice(6, 18)
-        .map((p: any) => p.photo || p.avatar || p.imageUrl)
+        .map(
+          (p: any) =>
+            p.primaryPhotoUrl ||
+            p.photoUrl ||
+            p.photo ||
+            (Array.isArray(p.photos) ? p.photos[0] : null) ||
+            p.profileAvatarUrl ||
+            p.avatar ||
+            p.imageUrl
+        )
         .filter(Boolean) as string[];
       if (next.length) preDecodeImages(next, true);
     }, 800);
@@ -594,51 +587,68 @@ const DatingPage: React.FC = () => {
                   const isTop = stackPosition === 0;
                   const isLeaving = leavingCard?.index === index;
 
-                  const normalizePhotoSrc = (value: unknown): string => {
-                    if (typeof value !== "string") return "";
-                    const trimmed = value.trim();
-                    return trimmed.length ? trimmed : "";
-                  };
                   const primaryPhotoSrc =
-                    normalizePhotoSrc(p.photoUrl) || normalizePhotoSrc(p.photo);
+                    sanitizePhotoSrc(p.primaryPhotoUrl) ||
+                    sanitizePhotoSrc(p.photoUrl) ||
+                    sanitizePhotoSrc(p.photo) ||
+                    (Array.isArray(p.photos)
+                      ? (p.photos
+                          .map((src) => sanitizePhotoSrc(src))
+                          .find((src) => Boolean(src)) as string | null) ?? null
+                      : null) ||
+                    sanitizePhotoSrc(p.profileAvatarUrl);
                   const galleryPhotos = Array.isArray(p.photos)
-                    ? p.photos.map(normalizePhotoSrc).filter((src) => src)
+                    ? p.photos
+                        .map((src) => sanitizePhotoSrc(src))
+                        .filter((src): src is string => Boolean(src))
                     : [];
+                  const profileAvatarSrc = sanitizePhotoSrc(p.profileAvatarUrl);
                   const orderedPhotos: string[] = [];
-                  if (primaryPhotoSrc) {
-                    orderedPhotos.push(primaryPhotoSrc);
-                  }
-                  for (const src of galleryPhotos) {
-                    if (!orderedPhotos.includes(src)) {
-                      orderedPhotos.push(src);
-                    }
-                  }
+                  const pushPhoto = (src: string | null) => {
+                    if (!src) return;
+                    if (orderedPhotos.includes(src)) return;
+                    orderedPhotos.push(src);
+                  };
+                  pushPhoto(primaryPhotoSrc);
+                  galleryPhotos.forEach((src) => pushPhoto(src));
+                  pushPhoto(profileAvatarSrc);
                   const imageUrl = orderedPhotos[0] || "/placeholder.jpg";
                   const photosArr = orderedPhotos;
-                  const uname = p.username || "";
-                  const trimmedUsername = normalizeUsername(uname);
-                  const normalizedName = trimmedUsername || "profile";
-                  const lowerKey = trimmedUsername
-                    ? trimmedUsername.toLowerCase()
-                    : "";
+                  const uname = sanitizeUsername(p.username) || "";
+                  const likeKeyCandidates = collectLikeKeys(p);
                   const firstNameValue =
                     (typeof p.firstName === "string" && p.firstName.trim()) ||
                     (typeof p.displayName === "string" &&
                       p.displayName.trim()) ||
                     "";
-                  const profileUserId =
-                    typeof p.userId === "string" ? p.userId : "";
-                  const profileKey = [
-                    profileUserId || normalizedName,
-                    p.updatedAt ?? p.createdAt ?? "",
-                    index,
-                  ].join("::");
-                  const liked = lowerKey ? !!byUser[lowerKey]?.outgoing : false;
-                  const cityValue = p.location?.city?.trim() || "";
-                  const stateValue = p.location?.state?.trim() || "";
-                  const countryValue = p.location?.country?.trim() || "";
+                  const profileUserId = sanitizeIdentifier(p.userId);
+                  const identityKey =
+                    deriveDatingProfileKey(p) ||
+                    (normalizeUsernameKey(uname)
+                      ? `name:${normalizeUsernameKey(uname)}`
+                      : profileUserId
+                      ? `id:${profileUserId}`
+                      : "");
+                  const profileRevision = (() => {
+                    if (typeof p.updatedAt === "string") return p.updatedAt;
+                    if (typeof p.updatedAt === "number")
+                      return String(p.updatedAt);
+                    if (typeof p.createdAt === "string") return p.createdAt;
+                    if (typeof p.createdAt === "number")
+                      return String(p.createdAt);
+                    return String(index);
+                  })();
+                  const profileKey = `${identityKey || `profile:${index}`}::${
+                    profileRevision || index
+                  }`;
+                  const liked = likeKeyCandidates.some((key) =>
+                    Boolean(byUser[key]?.outgoing)
+                  );
+                  const cityValue = sanitizeIdentifier(p.location?.city);
+                  const stateValue = sanitizeIdentifier(p.location?.state);
+                  const countryValue = sanitizeIdentifier(p.location?.country);
                   const fallbackLocation =
-                    p.location?.formatted?.trim() ||
+                    sanitizeIdentifier(p.location?.formatted) ||
                     [countryValue, stateValue, cityValue]
                       .filter((part) => part.length > 0)
                       .join(", ") ||
@@ -742,13 +752,9 @@ const DatingPage: React.FC = () => {
                           }}
                           onUnlike={() => {
                             if (!uname) return;
-                            const targetUserId =
-                              typeof p.userId === "string"
-                                ? p.userId.trim()
-                                : null;
                             unlikeMut.mutate({
                               username: uname,
-                              userId: targetUserId,
+                              userId: profileUserId || null,
                             });
                           }}
                           onOpenProfile={() => {

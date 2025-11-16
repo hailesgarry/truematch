@@ -176,6 +176,12 @@ registerRoute(
   })
 );
 
+// Explicitly skip Socket.IO routes - they should never be cached
+registerRoute(
+  ({ url }) => url.pathname.includes("/socket.io/"),
+  new NetworkOnly()
+);
+
 registerRoute(({ url, request }) => {
   if (request.method !== "GET") {
     return false;

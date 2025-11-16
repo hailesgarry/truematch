@@ -87,19 +87,19 @@ const BottomNav: React.FC<BottomNavProps> = ({ active }) => {
   return (
     <div
       ref={containerRef}
-      className="fixed bottom-0 left-0 right-0 z-10 bg-white"
+      className="fixed bottom-0 left-0 right-0 z-10 bg-white border-t border-gray-100"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
       <div className="max-w-md mx-auto h-14 px-3">
-        <div className="w-full">
-          <div className="grid h-full grid-cols-5">
+        <div className="w-full h-full">
+          <div className="flex h-full items-center justify-around">
             {/* Home */}
             <button
               aria-label="Home"
               aria-current={active === "home" ? "page" : undefined}
               {...homePrefetch}
               onClick={() => navigate("/")}
-              className={`inline-flex h-12 w-full items-center justify-center transition-all duration-150 ease-out outline-none focus:outline-none focus-visible:outline-none ring-0 focus:ring-0`}
+              className={`inline-flex h-full w-full items-center justify-center transition-all duration-150 ease-out outline-none focus:outline-none focus-visible:outline-none ring-0 focus:ring-0`}
             >
               <span className="relative inline-flex items-center justify-center">
                 <Home
@@ -117,7 +117,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ active }) => {
               aria-current={active === "dating" ? "page" : undefined}
               {...datingPrefetch}
               onClick={() => navigate("/dating")}
-              className={`inline-flex h-[48px] w-full items-center justify-center transition-all duration-150 ease-out outline-none focus:outline-none focus-visible:outline-none ring-0 focus:ring-0`}
+              className={`inline-flex h-full w-full items-center justify-center transition-all duration-150 ease-out outline-none focus:outline-none focus-visible:outline-none ring-0 focus:ring-0`}
             >
               <span className="relative inline-flex items-center justify-center">
                 <Heart
@@ -135,7 +135,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ active }) => {
               aria-current={active === "direct" ? "page" : undefined}
               {...directPrefetch}
               onClick={() => navigate("/direct")}
-              className={`inline-flex h-[48px] w-full items-center justify-center transition-all duration-150 ease-out outline-none focus:outline-none focus-visible:outline-none ring-0 focus:ring-0`}
+              className={`inline-flex h-full w-full items-center justify-center transition-all duration-150 ease-out outline-none focus:outline-none focus-visible:outline-none ring-0 focus:ring-0`}
             >
               <span className="relative inline-flex items-center justify-center">
                 <span className="relative inline-flex">
@@ -162,7 +162,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ active }) => {
               aria-current={active === "inbox" ? "page" : undefined}
               {...matchesPrefetch}
               onClick={() => navigate("/matches")}
-              className={`inline-flex h-[48px] w-full items-center justify-center transition-all duration-150 ease-out outline-none focus:outline-none focus-visible:outline-none ring-0 focus:ring-0`}
+              className={`inline-flex h-full w-full items-center justify-center transition-all duration-150 ease-out outline-none focus:outline-none focus-visible:outline-none ring-0 focus:ring-0`}
             >
               <span className="relative inline-flex items-center justify-center">
                 <span className="relative inline-flex">
@@ -189,7 +189,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ active }) => {
               aria-current={active === "profile" ? "page" : undefined}
               {...profilePrefetch}
               onClick={() => navigate(profileTarget)}
-              className={`inline-flex h-[48px] w-full items-center justify-center transition-all duration-150 ease-out outline-none focus:outline-none focus-visible:outline-none ring-0 focus:ring-0`}
+              className={`inline-flex h-full w-full items-center justify-center transition-all duration-150 ease-out outline-none focus:outline-none focus-visible:outline-none ring-0 focus:ring-0`}
             >
               <span className="relative inline-flex items-center justify-center">
                 <User

@@ -17,35 +17,117 @@ const app = express();
 const server = http.createServer(app);
 
 // CORS (now configurable via env)
-const allowedOrigins = Array.isArray(config.corsOrigins)
+const allowedOriginsRaw = Array.isArray(config.corsOrigins)
   ? config.corsOrigins
-  : [String(config.corsOrigins || "*")];
+  : config.corsOrigins
+  ? [config.corsOrigins]
+  : [];
 
-const corsOptions = {
-  origin(requestOrigin, callback) {
-    if (!requestOrigin) {
+const allowedOrigins = allowedOriginsRaw
+  .map((origin) => String(origin || "").trim())
+  .filter((origin) => origin && origin !== "*");
+
+if (allowedOrigins.length === 0) {
+  console.warn(
+    "[CORS] No explicit origins configured. Cross-origin requests will be rejected."
+  );
+} else {
+  console.log("[CORS] Allowed origins:", allowedOrigins);
+}
+
+const allowAllOrigins = allowedOrigins.includes("*");
+const normalizedAllowedOrigins = allowAllOrigins
+  ? null
+  : new Set(allowedOrigins.map((origin) => origin.toLowerCase()));
+
+const fallbackOrigin = allowedOrigins.length > 0 ? allowedOrigins[0] : null;
+
+const resolveCorsOrigin = (requestOrigin, callback) => {
+  if (!requestOrigin) {
+    if (allowAllOrigins) {
       return callback(null, true);
     }
-    if (allowedOrigins.includes("*")) {
-      return callback(null, true);
-    }
-    if (allowedOrigins.includes(requestOrigin)) {
-      return callback(null, true);
+    if (fallbackOrigin) {
+      return callback(null, fallbackOrigin);
     }
     return callback(new Error("Not allowed by CORS"));
-  },
-  methods: ["GET", "POST", "PUT", "DELETE"],
+  }
+  if (allowAllOrigins) {
+    return callback(null, requestOrigin || true);
+  }
+  if (normalizedAllowedOrigins?.has(requestOrigin.toLowerCase())) {
+    return callback(null, requestOrigin);
+  }
+  return callback(new Error("Not allowed by CORS"));
+};
+
+const corsOptions = {
+  origin: resolveCorsOrigin,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   credentials: true,
   optionsSuccessStatus: 204,
 };
 app.use(cors(corsOptions));
 
 // Socket.IO
+// Always use a function for Socket.IO CORS to prevent wildcard (*) responses
+// which are not allowed when credentials: true
+const socketCorsOrigin = (origin, callback) => {
+  console.log(`[Socket.IO CORS] Request from origin: ${origin}`);
+  console.log(`[Socket.IO CORS] Allowed origins:`, allowedOrigins);
+  console.log(`[Socket.IO CORS] Allow all origins:`, allowAllOrigins);
+
+  // If no origin (e.g., same-origin or non-browser request), allow if we have fallback
+  if (!origin) {
+    console.log(
+      `[Socket.IO CORS] No origin provided, using fallback: ${fallbackOrigin}`
+    );
+    if (fallbackOrigin) {
+      return callback(null, fallbackOrigin);
+    }
+    return callback(new Error("Not allowed by CORS"));
+  }
+
+  // Check if origin is in allowed list
+  if (allowAllOrigins) {
+    // Never return wildcard with credentials, return the specific origin
+    console.log(
+      `[Socket.IO CORS] Allowing origin (all origins mode): ${origin}`
+    );
+    return callback(null, origin);
+  }
+
+  if (normalizedAllowedOrigins?.has(origin.toLowerCase())) {
+    console.log(`[Socket.IO CORS] Allowing origin (matched): ${origin}`);
+    return callback(null, origin);
+  }
+
+  console.warn(`[CORS] Rejected Socket.IO connection from origin: ${origin}`);
+  return callback(new Error("Not allowed by CORS"));
+};
+
 const io = new Server(server, {
   cors: {
-    origin: corsOptions.origin,
+    origin: socketCorsOrigin,
     methods: ["GET", "POST"],
     credentials: true,
+  },
+  allowRequest: (req, callback) => {
+    const origin = req.headers.origin;
+    console.log(`[Socket.IO allowRequest] Origin: ${origin}`);
+
+    if (!origin) {
+      console.log(`[Socket.IO allowRequest] No origin, allowing with fallback`);
+      return callback(null, true);
+    }
+
+    if (normalizedAllowedOrigins?.has(origin.toLowerCase())) {
+      console.log(`[Socket.IO allowRequest] Origin allowed: ${origin}`);
+      return callback(null, true);
+    }
+
+    console.warn(`[Socket.IO allowRequest] Origin rejected: ${origin}`);
+    return callback("Origin not allowed", false);
   },
 });
 

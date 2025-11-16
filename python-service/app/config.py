@@ -21,6 +21,8 @@ def _redis_pubsub_enabled_default() -> bool:
 
 
 class Settings(BaseModel):
+    """Strongly typed settings loaded from environment variables."""
+
     # Support multiple common env var names for Mongo connection string
     mongo_uri: str = Field(
         default_factory=lambda: (
@@ -30,11 +32,28 @@ class Settings(BaseModel):
             or ""
         )
     )
-    mongo_db: str = Field(default_factory=lambda: os.getenv("MONGO_DB_NAME", "truematch"))
+    mongo_db: str = Field(
+        default_factory=lambda: os.getenv("MONGO_DB_NAME", "jesseiniya2023")
+    )
+    mongo_user_db: str = Field(
+        default_factory=lambda: (
+            os.getenv("MONGO_USER_DB")
+            or os.getenv("MONGO_DB_NAME", "jesseiniya2023")
+        )
+    )
+    mongo_dating_db: str = Field(
+        default_factory=lambda: (
+            os.getenv("MONGO_DATING_DB")
+            or os.getenv("MONGO_DB_NAME", "jesseiniya2023")
+        )
+    )
     # Optional: provide a non-SRV fallback URI (e.g., mongodb://127.0.0.1:27017)
     mongo_alt_uri: str = Field(default_factory=lambda: os.getenv("MONGO_ALT_URI", ""))
     # Optional: force direct connection (applies to non-SRV URIs)
-    mongo_direct: bool = Field(default_factory=lambda: os.getenv("MONGO_DIRECT", "false").lower() in ("1", "true", "yes"))
+    mongo_direct: bool = Field(
+        default_factory=lambda: os.getenv("MONGO_DIRECT", "false").lower()
+        in ("1", "true", "yes")
+    )
     cors_origin: str = Field(default_factory=lambda: os.getenv("CORS_ORIGIN", "http://localhost:5173"))
     port: int = Field(default_factory=lambda: int(os.getenv("PY_BACKEND_PORT", "8081")))
     # Web Push (VAPID)
@@ -51,6 +70,12 @@ class Settings(BaseModel):
     atlas_search_enabled: bool = Field(default_factory=lambda: os.getenv("ATLAS_SEARCH_ENABLED", "false").lower() in ("1", "true", "yes"))
     atlas_search_index: str = Field(default_factory=lambda: os.getenv("ATLAS_SEARCH_INDEX", "default"))
     atlas_autocomplete_enabled: bool = Field(default_factory=lambda: os.getenv("ATLAS_AUTOCOMPLETE_ENABLED", "false").lower() in ("1", "true", "yes"))
+
+    # Auth / security
+    jwt_secret: str = Field(default_factory=lambda: os.getenv("JWT_SECRET", "dev-secret-change-me"))
+    auth_token_ttl: int = Field(default_factory=lambda: int(os.getenv("AUTH_TOKEN_TTL", "86400")))
+    auth_rate_limit_window: int = Field(default_factory=lambda: int(os.getenv("AUTH_RATE_LIMIT_WINDOW", "60")))
+    auth_rate_limit_max: int = Field(default_factory=lambda: int(os.getenv("AUTH_RATE_LIMIT_MAX", "20")))
 
 @lru_cache()
 def get_settings() -> Settings:

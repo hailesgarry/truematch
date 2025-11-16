@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host",
+    "dev:ngrok": "vite --host --mode ngrok",
     "build": "npm run icons && npm run logo && vite build",
     "lint": "eslint .",
     "preview": "vite preview",

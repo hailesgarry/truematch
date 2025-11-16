@@ -362,7 +362,17 @@ const AudioWave: React.FC<AudioWaveProps> = ({
           activeWave.pause();
         } catch {}
       }
-      wave.play();
+      const playResult = wave.play() as
+        | void
+        | Promise<void>
+        | PromiseLike<void>
+        | undefined;
+      if (
+        playResult &&
+        typeof (playResult as Promise<void>).catch === "function"
+      ) {
+        (playResult as Promise<void>).catch(() => {});
+      }
     }
   };
 
@@ -450,6 +460,10 @@ const AudioWave: React.FC<AudioWaveProps> = ({
     <div
       className="flex w-full items-center gap-3"
       onKeyDown={onWrapperKeyDown}
+      onPointerDown={stopBubble}
+      onPointerMove={stopBubble}
+      onPointerUp={stopBubble}
+      onPointerCancel={stopBubble}
     >
       <button
         type="button"

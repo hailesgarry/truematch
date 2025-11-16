@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
-from ..db import get_db
+from ..db import get_dating_db, get_db, get_user_db
+from ..db.collections import DATING_PROFILES_COLLECTION, LIKES_COLLECTION, USER_PROFILES_COLLECTION
 from ..cache import cache as local_cache
 from ..cache_bus import publish_invalidate
 from ..utils.http import weak_etag
@@ -24,6 +25,8 @@ RELATIONSHIP_OPTIONS = (
     "Life partner",
     "Still figuring it out",
 )
+
+SECONDARY_PHOTO_LIMIT = 8
 
 _EARTH_RADIUS_M = 6_371_000.0
 
@@ -227,25 +230,26 @@ def _tokenize_keywords(*values: Any) -> Set[str]:
 
 
 def _synchronize_name_fields(doc: Dict[str, Any]) -> None:
+    """Ensure only the canonical firstName field remains on the document."""
+
     if not isinstance(doc, dict):
         return
-    candidates = (
-        doc.get("displayName"),
-        doc.get("firstName"),
-        doc.get("name"),
-        doc.get("username"),
-    )
+
     canonical: Optional[str] = None
-    for candidate in candidates:
-        if isinstance(candidate, str):
-            trimmed = candidate.strip()
-            if trimmed:
-                canonical = trimmed
-                break
+    for key in ("firstName", "displayName", "name", "username"):
+        value = doc.get(key)
+        if isinstance(value, str) and value.strip():
+            canonical = value.strip()
+            break
+
     if canonical:
-        doc["displayName"] = canonical
         doc["firstName"] = canonical
-        doc["name"] = canonical
+    elif "firstName" in doc:
+        doc.pop("firstName", None)
+
+    for legacy_key in ("displayName", "name", "username", "usernameLower"):
+        if legacy_key in doc:
+            doc.pop(legacy_key, None)
 
 
 PROFILE_TEXT_FIELD_LIMITS: Dict[str, int] = {
@@ -416,7 +420,6 @@ PROFILE_VISIBILITY_BASE_FIELDS: Tuple[str, ...] = (
 PROFILE_VISIBILITY_FIELDS: Tuple[str, ...] = PROFILE_VISIBILITY_BASE_FIELDS + PROFILE_PROMPT_FIELDS
 
 ALLOWED_UPSERT_FIELDS: Set[str] = {
-    "username",
     "photos",
     "photoPlacements",
     "photoUrl",
@@ -425,9 +428,7 @@ ALLOWED_UPSERT_FIELDS: Set[str] = {
     "mood",
     "age",
     "gender",
-    "displayName",
     "firstName",
-    "name",
     "interestedIn",
     "location",
     "preferences",
@@ -553,6 +554,10 @@ def _has_visible_dating_profile(doc: Dict[str, Any]) -> bool:
     if bool(doc.get("hasDatingProfile")):
         return True
 
+    primary_photo = doc.get("primaryPhotoUrl")
+    if isinstance(primary_photo, str) and primary_photo.strip():
+        return True
+
     photos = doc.get("photos")
     if isinstance(photos, (list, tuple)):
         for entry in photos:
@@ -673,6 +678,65 @@ def _normalize_photo_placements(
     return placements
 
 
+def _collect_secondary_photos(
+    doc: Dict[str, Any],
+    *,
+    primary: Optional[str] = None,
+    limit: int = SECONDARY_PHOTO_LIMIT,
+) -> List[str]:
+    if not isinstance(doc, dict):
+        return []
+    primary_url = primary
+    if not primary_url:
+        candidate = _extract_primary_photo(doc)
+        primary_url = candidate if candidate else None
+
+    raw_photos = doc.get("photos")
+    if not isinstance(raw_photos, (list, tuple)):
+        return []
+
+    seen: Set[str] = set()
+    secondary: List[str] = []
+    for entry in raw_photos:
+        url = _clean_url(entry)
+        if not url:
+            continue
+        if primary_url and url == primary_url:
+            continue
+        if url in seen:
+            continue
+        seen.add(url)
+        secondary.append(url)
+        if len(secondary) >= limit:
+            break
+    return secondary
+
+
+def _sanitize_secondary_photos_input(
+    raw: Any,
+    *,
+    primary: Optional[str],
+    limit: int = SECONDARY_PHOTO_LIMIT,
+) -> List[str]:
+    normalized = _normalize_photos(raw, limit=limit + 1, allow_empty=True)
+    if normalized is None:
+        return []
+    if len(normalized) > limit:
+        raise ValueError("secondary photo limit exceeded")
+    seen: Set[str] = set()
+    cleaned: List[str] = []
+    for url in normalized:
+        if primary and url == primary:
+            continue
+        if url in seen:
+            continue
+        seen.add(url)
+        cleaned.append(url)
+        if len(cleaned) >= limit:
+            break
+    return cleaned
+
+
 def _extract_primary_photo(doc: Dict[str, Any]) -> Optional[str]:
     if not isinstance(doc, dict):
         return None
@@ -699,11 +763,10 @@ def _apply_primary_photo_metadata(doc: Dict[str, Any]) -> None:
     primary = _extract_primary_photo(doc)
     if primary:
         doc["primaryPhotoUrl"] = primary
-        existing_photo = doc.get("photoUrl")
-        if not isinstance(existing_photo, str) or not existing_photo.strip():
-            doc["photoUrl"] = primary
     else:
         doc["primaryPhotoUrl"] = None
+    doc.pop("photoUrl", None)
+    doc.pop("photo", None)
 
 
 def _normalize_location(raw: Any) -> Optional[Dict[str, Any]]:
@@ -916,13 +979,15 @@ def _prepare_match_profile(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
     keyword_sources = [doc.get(field) for field in PROFILE_KEYWORD_FIELDS]
     keywords = _tokenize_keywords(*keyword_sources)
 
+    user_id = str(doc.get("userId") or "").strip()
+
     return {
-        "username": doc.get("username"),
+        "userId": user_id,
         "age": _coerce_int(doc.get("age"), min_val=18, max_val=120),
         "gender": _canonical_gender(doc.get("gender")),
         "interested_in": _canonical_interest(doc.get("interestedIn")),
         "religion": _clean_text(doc.get("religion"), 80),
-    "body_type": _clean_text(doc.get("bodyType"), 80),
+        "body_type": _clean_text(doc.get("bodyType"), 80),
         "relationships_lower": relationships_lower,
         "relationships_all": relationships_all,
         "preferences": {"age": preferences_age} if preferences_age else {},
@@ -1242,36 +1307,25 @@ router = APIRouter()
 async def list_profiles(
     request: Request,
     limit: int = Query(default=2000, ge=1, le=2000),
-    viewer: Optional[str] = Query(
-        default=None,
-        description="Viewer username to compute compatibility when auth token is not supplied",
-    ),
-    viewer_lat: Optional[float] = Query(
-        default=None, alias="viewerLat", ge=-90.0, le=90.0
-    ),
-    viewer_lon: Optional[float] = Query(
-        default=None, alias="viewerLon", ge=-180.0, le=180.0
-    ),
-    max_distance_km: Optional[float] = Query(
-        default=None, alias="maxDistanceKm", ge=0.1, le=25_000.0
-    ),
+    viewer_id: Optional[str] = Query(default=None, alias="viewerId"),
+    viewer_lat: Optional[float] = Query(default=None, alias="viewerLat", ge=-90.0, le=90.0),
+    viewer_lon: Optional[float] = Query(default=None, alias="viewerLon", ge=-180.0, le=180.0),
+    max_distance_km: Optional[float] = Query(default=None, alias="maxDistanceKm", ge=0.1, le=25_000.0),
 ) -> List[Dict]:
-    db = get_db()
-    docs = await db["profiles"].find({}).limit(int(limit)).to_list(length=int(limit))
+    db = get_dating_db()
+    docs = await db[DATING_PROFILES_COLLECTION].find({}).limit(int(limit)).to_list(length=int(limit))
 
     viewer_profile = await _resolve_viewer_profile(request)
-    if not viewer_profile and viewer:
-        candidate_username = viewer.strip()
-        if candidate_username:
-            try:
-                found = await db["profiles"].find_one(
-                    {"usernameLower": candidate_username.lower()}
-                )
-            except Exception:
-                found = None
-            if isinstance(found, dict):
-                viewer_profile = dict(found)
+    if not viewer_profile and viewer_id:
+        candidate_id = viewer_id.strip()
+        if candidate_id:
+            profile_doc = await db[DATING_PROFILES_COLLECTION].find_one({"userId": candidate_id})
+            if isinstance(profile_doc, dict):
+                viewer_profile = dict(profile_doc)
                 viewer_profile.pop("_id", None)
+
+    if isinstance(viewer_profile, dict):
+        _synchronize_name_fields(viewer_profile)
 
     viewer_match_profile = _prepare_match_profile(viewer_profile) if viewer_profile else None
     derived_lat = viewer_match_profile.get("location", {}).get("lat") if viewer_match_profile else None
@@ -1280,7 +1334,7 @@ async def list_profiles(
     base_viewer_lon = viewer_lon if viewer_lon is not None else derived_lon
 
     has_viewer_coords = isinstance(base_viewer_lat, (int, float)) and isinstance(base_viewer_lon, (int, float))
-    max_distance_m = None
+    max_distance_m: Optional[float] = None
     if has_viewer_coords and max_distance_km is not None:
         try:
             max_distance_m = max(0.0, float(max_distance_km) * 1000.0)
@@ -1289,17 +1343,18 @@ async def list_profiles(
 
     filtered: List[Dict] = []
 
-    for d in docs:
-        if not isinstance(d, dict):
+    for raw_doc in docs:
+        if not isinstance(raw_doc, dict):
             continue
-        d.pop("_id", None)
-        _synchronize_name_fields(d)
-        if not _has_visible_dating_profile(d):
+        doc = dict(raw_doc)
+        doc.pop("_id", None)
+        _synchronize_name_fields(doc)
+        if not _has_visible_dating_profile(doc):
             continue
 
         if has_viewer_coords:
             distance_m: Optional[float] = None
-            loc = d.get("location")
+            loc = doc.get("location")
             lat_val = None
             lon_val = None
             if isinstance(loc, dict):
@@ -1309,10 +1364,7 @@ async def list_profiles(
                     lat_val = _coerce_float(lat_val, min_val=-90.0, max_val=90.0)
                 if not isinstance(lon_val, (int, float)):
                     lon_val = _coerce_float(lon_val, min_val=-180.0, max_val=180.0)
-                if (
-                    (lat_val is None or lon_val is None)
-                    and isinstance(loc.get("coordinates"), dict)
-                ):
+                if (lat_val is None or lon_val is None) and isinstance(loc.get("coordinates"), dict):
                     parsed = _parse_geojson_point(loc.get("coordinates"))
                     if parsed:
                         if lat_val is None:
@@ -1321,27 +1373,23 @@ async def list_profiles(
                             lon_val = parsed.get("lon")
             distance_m = _haversine_distance_m(base_viewer_lat, base_viewer_lon, lat_val, lon_val)
             if max_distance_m is not None:
-                if (
-                    distance_m is None
-                    or not math.isfinite(distance_m)
-                    or distance_m > max_distance_m
-                ):
+                if distance_m is None or not math.isfinite(distance_m) or distance_m > max_distance_m:
                     continue
             if distance_m is not None and math.isfinite(distance_m):
-                d["distanceMeters"] = float(distance_m)
+                doc["distanceMeters"] = float(distance_m)
 
         if viewer_match_profile:
-            viewer_username = (viewer_match_profile.get("username") or "").strip().lower()
-            candidate_username = (d.get("username") or "").strip().lower()
-            if not viewer_username or viewer_username != candidate_username:
-                breakdown = _compute_match_breakdown(viewer_match_profile, d)
+            viewer_user_id = (viewer_match_profile.get("userId") or "").strip()
+            candidate_user_id = str(doc.get("userId") or "").strip()
+            if not viewer_user_id or viewer_user_id != candidate_user_id:
+                breakdown = _compute_match_breakdown(viewer_match_profile, doc)
                 if breakdown:
-                    d["matchBreakdown"] = breakdown
-                    d["matchPercentage"] = breakdown.get("total")
+                    doc["matchBreakdown"] = breakdown
+                    doc["matchPercentage"] = breakdown.get("total")
 
-        _apply_primary_photo_metadata(d)
-        d["hasDatingProfile"] = True
-        filtered.append(d)
+        _apply_primary_photo_metadata(doc)
+        doc.pop("hasDatingProfile", None)
+        filtered.append(doc)
 
     if has_viewer_coords:
         filtered.sort(key=lambda item: item.get("distanceMeters", float("inf")))
@@ -1362,34 +1410,21 @@ async def batch_profiles(
     if not name_entries and not id_entries:
         return []
 
-    normalized_names: List[Tuple[str, str]] = []
-    lower_name_set: Set[str] = set()
-    for name in name_entries:
-        lower = name.lower()
-        normalized_names.append((name, lower))
-        lower_name_set.add(lower)
-
-    normalized_ids: List[str] = id_entries[:]
-    id_set: Set[str] = set(id_entries)
-
     key_parts: List[str] = []
-    if lower_name_set:
-        key_parts.append("u:" + ",".join(sorted(lower_name_set)))
-    if id_set:
-        key_parts.append("i:" + ",".join(sorted(id_set)))
+    if name_entries:
+        key_parts.append("u:" + ",".join(sorted(name_entries)))
+    if id_entries:
+        key_parts.append("i:" + ",".join(sorted(id_entries)))
     cache_key = f"profiles:batch:{'|'.join(key_parts)}"
     try:
         inm = request.headers.get("if-none-match")
     except Exception:
         inm = None
 
-    if cache_key:
-        hit = await local_cache.get(cache_key)
-    else:
-        hit = None
-    if hit is not None:
+    cached = await local_cache.get(cache_key) if cache_key else None
+    if cached is not None:
         try:
-            raw = json.dumps(hit, separators=(",", ":"), sort_keys=True)
+            raw = json.dumps(cached, separators=(",", ":"), sort_keys=True)
             response.headers["Cache-Control"] = "public, max-age=30, stale-while-revalidate=120"
             tag = _etag_for(raw)
             response.headers["ETag"] = tag
@@ -1398,86 +1433,72 @@ async def batch_profiles(
                 return []
         except Exception:
             pass
-        return hit
+        return cached
 
-    db = get_db()
-    query_filters: List[Dict[str, Any]] = []
-    if lower_name_set:
-        query_filters.append({"usernameLower": {"$in": list(lower_name_set)}})
-    if id_set:
-        query_filters.append({"userId": {"$in": list(id_set)}})
+    dating_db = get_dating_db()
+    user_db = get_user_db()
 
-    if not query_filters:
+    name_to_user_id: Dict[str, str] = {}
+    if name_entries:
+        lowers = [entry.lower() for entry in name_entries]
+        try:
+            cursor = user_db[USER_PROFILES_COLLECTION].find({"usernameLower": {"$in": lowers}})
+            async for profile in cursor:
+                uid = str(profile.get("userId") or "").strip()
+                uname_lower = str(profile.get("usernameLower") or "").strip().lower()
+                if uid and uname_lower:
+                    name_to_user_id[uname_lower] = uid
+        except Exception:
+            name_to_user_id = {}
+
+    ordered_user_ids: List[str] = []
+    seen_ids: Set[str] = set()
+
+    def _track(user_id: Optional[str]) -> None:
+        if not user_id:
+            return
+        cleaned = user_id.strip()
+        if not cleaned or cleaned in seen_ids:
+            return
+        seen_ids.add(cleaned)
+        ordered_user_ids.append(cleaned)
+
+    for identifier in id_entries:
+        _track(identifier)
+
+    for name in name_entries:
+        resolved = name_to_user_id.get(name.lower())
+        _track(resolved)
+
+    query_user_ids: Set[str] = set(ordered_user_ids)
+    if not query_user_ids:
         return []
 
-    if len(query_filters) == 1:
-        docs = await db["profiles"].find(query_filters[0]).to_list(length=2000)
-    else:
-        docs = await db["profiles"].find({"$or": query_filters}).to_list(length=2000)
+    docs = await dating_db[DATING_PROFILES_COLLECTION].find({"userId": {"$in": list(query_user_ids)}}).to_list(length=2000)
 
-    name_lookup: Dict[str, Dict] = {}
-    id_lookup: Dict[str, Dict] = {}
-
-    def _mark_visibility(doc: Dict[str, Any]) -> Dict[str, Any]:
-        _apply_primary_photo_metadata(doc)
-        if _has_visible_dating_profile(doc):
-            doc["hasDatingProfile"] = True
-        else:
-            doc["hasDatingProfile"] = False
-        return doc
-
+    doc_lookup: Dict[str, Dict[str, Any]] = {}
     for raw_doc in docs:
         if not isinstance(raw_doc, dict):
             continue
         doc = dict(raw_doc)
         doc.pop("_id", None)
-        _mark_visibility(doc)
-
-        lower = str(doc.get("usernameLower") or "").lower()
-        if lower:
-            name_lookup[lower] = doc
-
+        _synchronize_name_fields(doc)
+        is_visible = _has_visible_dating_profile(doc)
+        doc.pop("hasDatingProfile", None)
+        _apply_primary_photo_metadata(doc)
         uid = str(doc.get("userId") or "").strip()
         if uid:
-            id_lookup[uid] = doc
+            doc_lookup[uid] = doc
 
     ordered_docs: List[Dict] = []
-    seen_keys: Set[str] = set()
+    for user_id in ordered_user_ids:
+        doc = doc_lookup.get(user_id)
+        if doc:
+            ordered_docs.append(doc)
 
-    def _seen(doc: Dict[str, Any]) -> bool:
-        uid = str(doc.get("userId") or "").strip()
-        uname = str(doc.get("usernameLower") or "").strip().lower()
-        keys = []
-        if uid:
-            keys.append(f"id:{uid}")
-        if uname:
-            keys.append(f"name:{uname}")
-        for key in keys:
-            if key in seen_keys:
-                return True
-        return False
-
-    def _add(doc: Dict[str, Any]) -> None:
-        _synchronize_name_fields(doc)
-        uid = str(doc.get("userId") or "").strip()
-        uname = str(doc.get("usernameLower") or "").strip().lower()
-        if uid:
-            seen_keys.add(f"id:{uid}")
-        if uname:
-            seen_keys.add(f"name:{uname}")
-        ordered_docs.append(doc)
-
-    for identifier in normalized_ids:
-        doc = id_lookup.get(identifier)
-        if not doc or _seen(doc):
-            continue
-        _add(doc)
-
-    for original, lower in normalized_names:
-        doc = name_lookup.get(lower)
-        if not doc or _seen(doc):
-            continue
-        _add(doc)
+    for user_id, document in doc_lookup.items():
+        if user_id not in seen_ids:
+            ordered_docs.append(document)
 
     if cache_key:
         await local_cache.set(cache_key, ordered_docs, ttl_seconds=30)
@@ -1494,17 +1515,34 @@ async def upsert_profile(payload: Dict[str, Any]) -> Dict:
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="invalid payload")
 
-    db = get_db()
-    username = _clean_text(payload.get("username"), 100)
-    if not username:
-        raise HTTPException(status_code=400, detail="username required")
+    dating_db = get_dating_db()
+    user_db = get_user_db()
+
+    raw_user_id = payload.get("userId")
+    if not isinstance(raw_user_id, str) or not raw_user_id.strip():
+        raise HTTPException(status_code=400, detail="userId required")
+    user_id = raw_user_id.strip()
+
+    user_doc = await user_db[USER_PROFILES_COLLECTION].find_one({"userId": user_id})
+    if not user_doc:
+        raise HTTPException(status_code=404, detail="user profile not found")
 
     body = {key: value for key, value in payload.items() if key in ALLOWED_UPSERT_FIELDS}
-    body["username"] = username
 
-    existing_doc = await db["profiles"].find_one({"username": username}) or {}
+    raw_user_profile_id = user_doc.get("_id")
+    if raw_user_profile_id is None:
+        raise HTTPException(status_code=400, detail="user profile invalid")
+    user_profile_id = (
+        str(raw_user_profile_id)
+        if isinstance(raw_user_profile_id, ObjectId)
+        else raw_user_profile_id
+    )
+
+    existing_doc = await dating_db[DATING_PROFILES_COLLECTION].find_one({"userId": user_id}) or {}
     if isinstance(existing_doc, dict):
         existing_doc.pop("_id", None)
+        for legacy_key in ("username", "usernameLower", "displayName", "name", "photo", "photoUrl", "hasDatingProfile"):
+            existing_doc.pop(legacy_key, None)
 
     # Normalize numeric age if provided
     if "age" in body:
@@ -1535,47 +1573,33 @@ async def upsert_profile(payload: Dict[str, Any]) -> Dict:
     elif "interestedIn" in body:
         body.pop("interestedIn", None)
 
-    display_name = _clean_text(body.get("displayName"), 80)
-    first_name = _clean_text(body.get("firstName"), 80)
-    name_value = _clean_text(body.get("name"), 80)
-    canonical_name = display_name or first_name or name_value
+    canonical_name = _clean_text(body.get("firstName"), 80)
+    if not canonical_name and isinstance(existing_doc, dict):
+        canonical_name = _clean_text(existing_doc.get("firstName"), 80)
+    if not canonical_name:
+        canonical_name = _clean_text(payload.get("firstName"), 80)
+    if not canonical_name:
+        raise HTTPException(status_code=400, detail="firstName required")
+    body["firstName"] = canonical_name
 
-    if canonical_name:
-        body["displayName"] = canonical_name
-        body["firstName"] = canonical_name
-        body["name"] = canonical_name
-    else:
-        for key in ("displayName", "firstName", "name"):
-            if key in body:
-                body.pop(key, None)
+    # Clear any legacy name fields that might have slipped through
+    for legacy_name in ("displayName", "name", "username", "usernameLower"):
+        body.pop(legacy_name, None)
 
     if "location" in body:
         normalized_location = _normalize_location(body.get("location"))
-        existing_location = (
-            existing_doc.get("location") if isinstance(existing_doc, dict) else None
-        )
+        existing_location = existing_doc.get("location") if isinstance(existing_doc, dict) else None
         if normalized_location is not None:
             if isinstance(existing_location, dict):
                 if "lat" not in normalized_location:
-                    prev_lat = _coerce_float(
-                        existing_location.get("lat"),
-                        min_val=-90.0,
-                        max_val=90.0,
-                    )
+                    prev_lat = _coerce_float(existing_location.get("lat"), min_val=-90.0, max_val=90.0)
                     if prev_lat is not None:
                         normalized_location["lat"] = prev_lat
                 if "lon" not in normalized_location:
-                    prev_lon = _coerce_float(
-                        existing_location.get("lon"),
-                        min_val=-180.0,
-                        max_val=180.0,
-                    )
+                    prev_lon = _coerce_float(existing_location.get("lon"), min_val=-180.0, max_val=180.0)
                     if prev_lon is not None:
                         normalized_location["lon"] = prev_lon
-                if (
-                    "coordinates" not in normalized_location
-                    and isinstance(existing_location.get("coordinates"), dict)
-                ):
+                if "coordinates" not in normalized_location and isinstance(existing_location.get("coordinates"), dict):
                     coords = _parse_geojson_point(existing_location.get("coordinates"))
                     if coords and "lat" not in normalized_location:
                         normalized_location["lat"] = coords.get("lat")
@@ -1611,12 +1635,10 @@ async def upsert_profile(payload: Dict[str, Any]) -> Dict:
         if key in body:
             raw_value = body.get(key)
             relations = _canonical_relationship_list(raw_value)
-            if relations or (
-                isinstance(raw_value, (list, tuple, set)) and not relations
-            ):
+            if relations or (isinstance(raw_value, (list, tuple, set)) and not relations):
                 body[key] = relations
             else:
-                body.pop(key, None)
+                body.pop(key, None) 
 
     if "smoking" in body:
         body["smoking"] = _canonical_smoking(body.get("smoking"))
@@ -1641,7 +1663,6 @@ async def upsert_profile(payload: Dict[str, Any]) -> Dict:
         if key in body:
             body[key] = _clean_text(body.get(key), limit)
 
-    # Trim mood/profile heading content
     if "mood" in body:
         mood_value = _clean_text(body.get("mood"), 160)
         if mood_value:
@@ -1649,7 +1670,6 @@ async def upsert_profile(payload: Dict[str, Any]) -> Dict:
         else:
             body.pop("mood", None)
 
-    # Normalize uploaded photo URLs and ensure primary photo consistency
     primary_photo_override: Optional[str] = None
     photos_in_payload = "photos" in body
     existing_photos_list: List[str] = []
@@ -1658,31 +1678,15 @@ async def upsert_profile(payload: Dict[str, Any]) -> Dict:
         raw_existing_photos = existing_doc.get("photos")
         if isinstance(raw_existing_photos, list):
             existing_photos_list = [
-                entry
-                for entry in raw_existing_photos
-                if isinstance(entry, str) and entry.strip()
+                entry for entry in raw_existing_photos if isinstance(entry, str) and entry.strip()
             ]
-        if isinstance(existing_doc.get("primaryPhotoUrl"), str):
-            candidate = existing_doc.get("primaryPhotoUrl")
-            if isinstance(candidate, str) and candidate.strip():
-                existing_primary = candidate.strip()
-        if not existing_primary and isinstance(existing_doc.get("photoUrl"), str):
-            candidate = existing_doc.get("photoUrl")
-            if isinstance(candidate, str) and candidate.strip():
-                existing_primary = candidate.strip()
-        if not existing_primary and isinstance(existing_doc.get("photo"), str):
-            candidate = existing_doc.get("photo")
-            if isinstance(candidate, str) and candidate.strip():
-                existing_primary = candidate.strip()
-        if existing_primary:
-            existing_photos_list = [
-                entry for entry in existing_photos_list if entry != existing_primary
-            ]
+        primary_candidate_existing = existing_doc.get("primaryPhotoUrl") or existing_doc.get("photoUrl") or existing_doc.get("photo")
+        if isinstance(primary_candidate_existing, str) and primary_candidate_existing.strip():
+            existing_primary = primary_candidate_existing.strip()
+            existing_photos_list = [entry for entry in existing_photos_list if entry != existing_primary]
+
     if photos_in_payload:
-        sanitized_photos = _normalize_photos(
-            body.get("photos"),
-            allow_empty=True,
-        )
+        sanitized_photos = _normalize_photos(body.get("photos"), allow_empty=True)
         if sanitized_photos is not None:
             body["photos"] = sanitized_photos
             primary_photo_override = sanitized_photos[0] if sanitized_photos else None
@@ -1692,33 +1696,36 @@ async def upsert_profile(payload: Dict[str, Any]) -> Dict:
     if photos_in_payload and not isinstance(body.get("photos"), list):
         photos_in_payload = False
 
-    def _resolve_photo_field(
-        field_name: str,
-        fallback: Optional[str],
-    ) -> Optional[str]:
+    def _resolve_photo_field(field_name: str, fallback: Optional[str]) -> Optional[str]:
         if field_name in body:
             return _clean_url(body.get(field_name))
         return fallback
 
     resolved_photo_url: Optional[str] = None
     if photos_in_payload or "photoUrl" in body:
-        resolved_photo_url = _resolve_photo_field(
-            "photoUrl",
-            primary_photo_override,
-        )
+        resolved_photo_url = _resolve_photo_field("photoUrl", primary_photo_override)
         body["photoUrl"] = resolved_photo_url if resolved_photo_url else None
 
     if photos_in_payload or "photo" in body:
-        resolved_photo_field = _resolve_photo_field(
-            "photo",
-            primary_photo_override or resolved_photo_url,
-        )
+        resolved_photo_field = _resolve_photo_field("photo", primary_photo_override or resolved_photo_url)
         body["photo"] = resolved_photo_field if resolved_photo_field else None
 
     photos_list = body.get("photos") if isinstance(body.get("photos"), list) else None
 
     primary_candidate: Optional[str] = None
     explicit_primary_clear = False
+
+    if "primaryPhotoUrl" in body:
+        raw_primary = body.get("primaryPhotoUrl")
+        if isinstance(raw_primary, str):
+            cleaned_primary = _clean_url(raw_primary)
+            if cleaned_primary:
+                primary_candidate = cleaned_primary
+            else:
+                explicit_primary_clear = True
+        elif raw_primary is None:
+            explicit_primary_clear = True
+        body.pop("primaryPhotoUrl", None)
 
     if "photoUrl" in body:
         candidate = body.get("photoUrl")
@@ -1790,15 +1797,10 @@ async def upsert_profile(payload: Dict[str, Any]) -> Dict:
         if raw_placements is None:
             body["photoPlacements"] = {}
         else:
-            normalized_placements = _normalize_photo_placements(
-                raw_placements,
-                allowed_photo_values,
-            )
+            normalized_placements = _normalize_photo_placements(raw_placements, allowed_photo_values)
             if primary_current:
                 normalized_placements = {
-                    key: value
-                    for key, value in normalized_placements.items()
-                    if key != primary_current
+                    key: value for key, value in normalized_placements.items() if key != primary_current
                 }
             if normalized_placements:
                 body["photoPlacements"] = normalized_placements
@@ -1807,40 +1809,37 @@ async def upsert_profile(payload: Dict[str, Any]) -> Dict:
             else:
                 body.pop("photoPlacements", None)
     elif photos_in_payload:
-        existing_placements_raw = (
-            existing_doc.get("photoPlacements") if isinstance(existing_doc, dict) else None
-        )
+        existing_placements_raw = existing_doc.get("photoPlacements") if isinstance(existing_doc, dict) else None
         if isinstance(existing_placements_raw, dict):
-            normalized_existing_placements = _normalize_photo_placements(
-                existing_placements_raw,
-                allowed_photo_values,
-            )
+            normalized_existing_placements = _normalize_photo_placements(existing_placements_raw, allowed_photo_values)
             if primary_current:
                 normalized_existing_placements = {
-                    key: value
-                    for key, value in normalized_existing_placements.items()
-                    if key != primary_current
+                    key: value for key, value in normalized_existing_placements.items() if key != primary_current
                 }
             if normalized_existing_placements:
                 body["photoPlacements"] = normalized_existing_placements
             elif existing_placements_raw:
                 body["photoPlacements"] = {}
 
-    # Ensure timestamps
     now_ms = int(time.time() * 1000)
     body.pop("createdAt", None)
     body["updatedAt"] = now_ms
+
+    body["userId"] = user_id
+    body["userProfileId"] = user_profile_id
 
     merged_doc: Dict[str, Any] = dict(existing_doc) if isinstance(existing_doc, dict) else {}
     for key, value in body.items():
         merged_doc[key] = value
     has_profile = _has_visible_dating_profile(merged_doc)
-    body["hasDatingProfile"] = has_profile
 
     unset_payload: Dict[str, int] = {}
     for legacy_field in LEGACY_PROFILE_FIELDS:
         if legacy_field in existing_doc:
             unset_payload[legacy_field] = 1
+    for legacy_key in ("username", "usernameLower", "displayName", "name", "photo", "photoUrl", "hasDatingProfile"):
+        unset_payload[legacy_key] = 1
+        body.pop(legacy_key, None)
     if has_profile:
         if not existing_doc.get("datingProfileCreatedAt") and "datingProfileCreatedAt" not in body:
             body["datingProfileCreatedAt"] = now_ms
@@ -1854,20 +1853,34 @@ async def upsert_profile(payload: Dict[str, Any]) -> Dict:
         }
         if unset_payload:
             update_spec["$unset"] = unset_payload
-        await db["profiles"].update_one(
-            {"username": username},
+        await dating_db[DATING_PROFILES_COLLECTION].update_one(
+            {"userId": user_id},
             update_spec,
             upsert=True,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail="failed to save profile") from exc
 
-    doc = await db["profiles"].find_one({"username": username}) or {}
+    doc = await dating_db[DATING_PROFILES_COLLECTION].find_one({"userId": user_id}) or {}
     doc.pop("_id", None)
     _apply_primary_photo_metadata(doc)
     _synchronize_name_fields(doc)
+    doc.pop("hasDatingProfile", None)
 
-    # Invalidate caches so new data is visible immediately
+    if has_profile:
+        await user_db[USER_PROFILES_COLLECTION].update_one(
+            {"userId": user_id},
+            {"$set": {"hasDatingProfile": True}},
+        )
+    else:
+        await user_db[USER_PROFILES_COLLECTION].update_one(
+            {"userId": user_id},
+            {"$unset": {"hasDatingProfile": ""}},
+        )
+
+    doc["userId"] = user_id
+    doc["userProfileId"] = user_profile_id
+
     try:
         await local_cache.delete_prefix("profiles:batch:")
         await publish_invalidate("profiles:batch:")
@@ -1876,39 +1889,40 @@ async def upsert_profile(payload: Dict[str, Any]) -> Dict:
 
     return doc
 
-@router.delete("/dating/profile/{username}")
-async def delete_profile(username: str):
-    db = get_db()
-    uname = _clean_text(username, 100)
-    if not uname:
-        raise HTTPException(status_code=400, detail="username required")
+@router.delete("/dating/profile/{user_id}")
+async def delete_profile(user_id: str):
+    normalized_user_id = (user_id or "").strip()
+    if not normalized_user_id:
+        raise HTTPException(status_code=400, detail="userId required")
 
-    doc = await db["profiles"].find_one({"username": uname})
+    dating_db = get_dating_db()
+    user_db = get_user_db()
+    db = get_db()
+
+    doc = await dating_db[DATING_PROFILES_COLLECTION].find_one({"userId": normalized_user_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Profile not found")
 
     now_ms = int(time.time() * 1000)
     unset_keys = {field: 1 for field in PROFILE_CLEAR_FIELDS}
-
-    await db["profiles"].update_one(
-        {"username": uname},
+    await dating_db[DATING_PROFILES_COLLECTION].update_one(
+        {"userId": normalized_user_id},
         {
-            "$set": {"hasDatingProfile": False, "updatedAt": now_ms},
+            "$set": {
+                "updatedAt": now_ms,
+                "userId": normalized_user_id,
+            },
             "$unset": unset_keys,
         },
     )
 
-    # purge likes referencing this user
-    uname_lc = uname.lower()
-    await db["likes"].delete_many(
-        {
-            "$or": [
-                {"from": uname},
-                {"to": uname},
-                {"fromLc": uname_lc},
-                {"toLc": uname_lc},
-            ]
-        }
+    await user_db[USER_PROFILES_COLLECTION].update_one(
+        {"userId": normalized_user_id},
+        {"$unset": {"hasDatingProfile": ""}},
+    )
+
+    await db[LIKES_COLLECTION].delete_many(
+        {"$or": [{"liker_id": normalized_user_id}, {"liked_id": normalized_user_id}]}
     )
 
     try:
@@ -1920,58 +1934,243 @@ async def delete_profile(username: str):
     return {"success": True}
 
 
-@router.delete("/dating/profile/{username}/photo")
-async def remove_profile_photo(username: str, url: str):
-    username = (username or "").strip()
-    target_url = (url or "").strip()
-    if not username or not target_url:
-        raise HTTPException(status_code=400, detail="username and url required")
-    db = get_db()
-    doc = await db["profiles"].find_one({"username": username})
+@router.get("/dating/profile/{user_id}/photos")
+async def get_profile_secondary_photos(user_id: str) -> Dict[str, Any]:
+    normalized_user_id = (user_id or "").strip()
+    if not normalized_user_id:
+        raise HTTPException(status_code=400, detail="userId required")
+
+    dating_db = get_dating_db()
+    doc = await dating_db[DATING_PROFILES_COLLECTION].find_one({"userId": normalized_user_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Profile not found")
-    primary_existing = None
-    if isinstance(doc.get("photoUrl"), str) and doc.get("photoUrl").strip():
-        primary_existing = doc.get("photoUrl").strip()
-    elif isinstance(doc.get("photo"), str) and doc.get("photo").strip():
-        primary_existing = doc.get("photo").strip()
+
+    payload: Dict[str, Any] = dict(doc)
+    payload.pop("_id", None)
+
+    _apply_primary_photo_metadata(payload)
+    primary_candidate = payload.get("primaryPhotoUrl") 
+    primary_photo = (
+        primary_candidate.strip()
+        if isinstance(primary_candidate, str) and primary_candidate.strip()
+        else None
+    )
+    payload["photos"] = _collect_secondary_photos(payload, primary=primary_photo)
+
+    _synchronize_name_fields(payload)
+    payload.pop("hasDatingProfile", None)
+    payload["userId"] = normalized_user_id
+    return payload
+
+
+@router.post("/dating/profile/{user_id}/photos")
+async def set_profile_secondary_photos(user_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    normalized_user_id = (user_id or "").strip()
+    if not normalized_user_id:
+        raise HTTPException(status_code=400, detail="userId required")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="invalid payload")
+
+    dating_db = get_dating_db()
+    existing_doc_raw = await dating_db[DATING_PROFILES_COLLECTION].find_one({"userId": normalized_user_id})
+    if not existing_doc_raw:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    existing_doc: Dict[str, Any] = dict(existing_doc_raw)
+    existing_doc.pop("_id", None)
+
+    _apply_primary_photo_metadata(existing_doc)
+    primary_candidate = existing_doc.get("primaryPhotoUrl")
+    primary_photo = (
+        primary_candidate.strip()
+        if isinstance(primary_candidate, str) and primary_candidate.strip()
+        else None
+    )
+    current_photos = _collect_secondary_photos(existing_doc, primary=primary_photo)
+
+    if "photos" in payload:
+        try:
+            next_photos = _sanitize_secondary_photos_input(
+                payload.get("photos"),
+                primary=primary_photo,
+            )
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"photos cannot exceed {SECONDARY_PHOTO_LIMIT}",
+            ) from None
+    elif "url" in payload:
+        sanitized_url = _clean_url(payload.get("url"))
+        if not sanitized_url:
+            raise HTTPException(status_code=400, detail="valid url required")
+        if primary_photo and sanitized_url == primary_photo:
+            raise HTTPException(status_code=400, detail="url matches primary photo")
+        next_photos = list(current_photos)
+        if sanitized_url not in next_photos:
+            next_photos.append(sanitized_url)
+    else:
+        raise HTTPException(status_code=400, detail="photos payload required")
+
+    if len(next_photos) > SECONDARY_PHOTO_LIMIT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"photos cannot exceed {SECONDARY_PHOTO_LIMIT}",
+        )
+
+    raw_placements = existing_doc.get("photoPlacements")
+    normalized_placements = None
+    if isinstance(raw_placements, dict):
+        normalized_placements = _normalize_photo_placements(raw_placements, next_photos)
+        if not normalized_placements:
+            normalized_placements = None
+
+    now_ms = int(time.time() * 1000)
+    set_payload: Dict[str, Any] = {
+        "photos": next_photos,
+        "updatedAt": now_ms,
+        "userId": normalized_user_id,
+    }
+    unset_payload: Dict[str, int] = {}
+
+    if normalized_placements is not None:
+        set_payload["photoPlacements"] = normalized_placements
+    elif isinstance(raw_placements, dict) and raw_placements:
+        unset_payload["photoPlacements"] = 1
+
+    update_spec: Dict[str, Any] = {"$set": set_payload}
+    if unset_payload:
+        update_spec["$unset"] = unset_payload
+
+    await dating_db[DATING_PROFILES_COLLECTION].update_one(
+        {"userId": normalized_user_id},
+        update_spec,
+    )
+
+    updated = await dating_db[DATING_PROFILES_COLLECTION].find_one({"userId": normalized_user_id}) or {}
+    updated.pop("_id", None)
+
+    _apply_primary_photo_metadata(updated)
+    primary_updated = updated.get("primaryPhotoUrl")
+    normalized_primary = (
+        primary_updated.strip()
+        if isinstance(primary_updated, str) and primary_updated.strip()
+        else None
+    )
+    updated["photos"] = _collect_secondary_photos(updated, primary=normalized_primary)
+
+    _synchronize_name_fields(updated)
+    updated.pop("hasDatingProfile", None)
+    updated["userId"] = normalized_user_id
+
+    has_profile = _has_visible_dating_profile(updated)
+    user_db = get_user_db()
+    if has_profile:
+        await user_db[USER_PROFILES_COLLECTION].update_one(
+            {"userId": normalized_user_id},
+            {"$set": {"hasDatingProfile": True}},
+        )
+    else:
+        await user_db[USER_PROFILES_COLLECTION].update_one(
+            {"userId": normalized_user_id},
+            {"$unset": {"hasDatingProfile": ""}},
+        )
+
+    try:
+        await local_cache.delete_prefix("profiles:batch:")
+        await publish_invalidate("profiles:batch:")
+    except Exception:
+        pass
+
+    return updated
+
+
+@router.delete("/dating/profile/{user_id}/photo")
+async def remove_profile_photo(user_id: str, url: str):
+    normalized_user_id = (user_id or "").strip()
+    target_url = (url or "").strip()
+    if not normalized_user_id or not target_url:
+        raise HTTPException(status_code=400, detail="userId and url required")
+
+    dating_db = get_dating_db()
+    doc = await dating_db[DATING_PROFILES_COLLECTION].find_one({"userId": normalized_user_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    primary_existing: Optional[str] = None
+    for key in ("primaryPhotoUrl", "photoUrl", "photo"):
+        value = doc.get(key)
+        if isinstance(value, str) and value.strip():
+            primary_existing = value.strip()
+            break
 
     photos: List[str] = []
     seen: Set[str] = set()
-    for entry in doc.get("photos") or []:
-        if not isinstance(entry, str):
-            continue
-        trimmed = entry.strip()
-        if not trimmed or trimmed == target_url or (primary_existing and trimmed == primary_existing):
-            continue
-        if trimmed in seen:
-            continue
-        seen.add(trimmed)
-        photos.append(trimmed)
-    update: Dict = {"photos": photos}
+    raw_photos = doc.get("photos")
+    if isinstance(raw_photos, list):
+        for entry in raw_photos:
+            if not isinstance(entry, str):
+                continue
+            trimmed = entry.strip()
+            if not trimmed or trimmed == target_url:
+                continue
+            if trimmed in seen:
+                continue
+            seen.add(trimmed)
+            photos.append(trimmed)
+
     next_primary = photos[0] if photos else None
-    if doc.get("photoUrl") == target_url:
-        update["photoUrl"] = next_primary
-    if doc.get("photo") == target_url:
-        update["photo"] = next_primary
-    if doc.get("primaryPhotoUrl") == target_url or (
-        doc.get("photoUrl") == target_url and "primaryPhotoUrl" not in update
-    ) or (
-        doc.get("photo") == target_url and "primaryPhotoUrl" not in update
-    ):
-        update["primaryPhotoUrl"] = next_primary
+    if primary_existing and primary_existing != target_url:
+        next_primary = primary_existing
+
     placements_raw = doc.get("photoPlacements")
+    normalized_placements: Optional[Dict[str, Any]] = None
     if isinstance(placements_raw, dict):
         normalized_placements = _normalize_photo_placements(placements_raw, photos)
-        if normalized_placements:
-            update["photoPlacements"] = normalized_placements
-        elif placements_raw:
-            update["photoPlacements"] = {}
-    update["updatedAt"] = int(__import__("time").time() * 1000)
-    await db["profiles"].update_one({"username": username}, {"$set": update})
-    updated = await db["profiles"].find_one({"username": username})
+        if normalized_placements and next_primary:
+            normalized_placements.pop(next_primary, None)
+        if normalized_placements == {}:
+            normalized_placements = None
+
+    now_ms = int(time.time() * 1000)
+    set_payload: Dict[str, Any] = {
+        "photos": photos,
+        "updatedAt": now_ms,
+        "userId": normalized_user_id,
+    }
+    unset_payload: Dict[str, int] = {}
+
+    if next_primary:
+        set_payload["primaryPhotoUrl"] = next_primary
+    else:
+        unset_payload["primaryPhotoUrl"] = 1
+
+    if normalized_placements is not None:
+        set_payload["photoPlacements"] = normalized_placements
+    else:
+        unset_payload["photoPlacements"] = 1
+
+    update_spec: Dict[str, Any] = {"$set": set_payload}
+    if unset_payload:
+        update_spec["$unset"] = unset_payload
+
+    await dating_db[DATING_PROFILES_COLLECTION].update_one(
+        {"userId": normalized_user_id},
+        update_spec,
+    )
+
+    updated = await dating_db[DATING_PROFILES_COLLECTION].find_one({"userId": normalized_user_id})
+    updated = updated or {}
     updated.pop("_id", None)
     _apply_primary_photo_metadata(updated)
+    _synchronize_name_fields(updated)
+    updated.pop("hasDatingProfile", None)
+
+    try:
+        await local_cache.delete_prefix("profiles:batch:")
+        await publish_invalidate("profiles:batch:")
+    except Exception:
+        pass
+
     return updated
 
 

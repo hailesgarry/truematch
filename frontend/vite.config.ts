@@ -20,8 +20,6 @@ export default defineConfig(({ mode }) => {
   if (normalizedNgrokHost.length > 0) {
     allowedHosts.add(normalizedNgrokHost);
   }
-  const defaultTunnel = "ungraphic-candy-unrobbed.ngrok-free.dev";
-  allowedHosts.add(defaultTunnel);
 
   return {
     resolve: {
@@ -92,7 +90,7 @@ export default defineConfig(({ mode }) => {
     ].filter(Boolean),
     server: {
       host: true,
-      // Allow the ngrok tunnel host so Vite doesn't 403 forwarded requests.
+      // Allow additional hosts from env so Vite doesn't 403 forwarded requests.
       allowedHosts: Array.from(allowedHosts),
     },
   };

@@ -13,6 +13,8 @@ from fastapi import HTTPException
 from ..cache import cache as local_cache
 from ..cache_bus import publish_invalidate
 from ..collections import GROUP_MESSAGES_COLLECTION
+from ..config import get_settings
+from ..db.collections import USER_PROFILES_COLLECTION
 from ..models.group import (
     GroupCreateRequest,
     GroupUpdateRequest,
@@ -35,6 +37,14 @@ _metrics = {
     "presence_timeouts": 0,
     "presence_requests": 0,
 }
+
+_SETTINGS = get_settings()
+
+
+def _resolve_lookup_namespace(db_name: str, collection: str) -> str:
+    if db_name == _SETTINGS.mongo_db:
+        return collection
+    return f"{db_name}.{collection}"
 
 
 def _sanitize_preview_member(item: Dict[str, Any]) -> Dict[str, Optional[str]]:
@@ -75,11 +85,15 @@ async def _fetch_member_preview(db, group_ids: List[str], limit: int) -> Dict[st
             uncached_ids.append(gid)
 
     if uncached_ids:
+        user_profile_lookup_from = _resolve_lookup_namespace(
+            _SETTINGS.mongo_user_db,
+            USER_PROFILES_COLLECTION,
+        )
         pipeline = [
             {"$match": {"groupId": {"$in": uncached_ids}}},
             {
                 "$lookup": {
-                    "from": "profiles",
+                    "from": user_profile_lookup_from,
                     "let": {"uname": "$usernameLower"},
                     "pipeline": [
                         {

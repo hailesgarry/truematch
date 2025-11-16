@@ -133,8 +133,8 @@ export interface Toast {
 
 // NEW/UPDATED: Dating profile
 export interface DatingProfile {
-  username: string;
-  userId?: string;
+  userId: string;
+  username?: string;
   hasDatingProfile?: boolean;
 
   // Primary (legacy)
@@ -289,6 +289,18 @@ export interface MatchBreakdown {
   };
 }
 
-// Use for upsert calls where username is required but other fields are optional
-export type DatingProfileUpsert = Pick<DatingProfile, "username"> &
-  Partial<Omit<DatingProfile, "username">>;
+// Use for upsert calls where userId is required but other fields are optional
+export type DatingProfileUpsert = {
+  userId: string;
+} & Partial<
+  Omit<
+    DatingProfile,
+    | "userId"
+    | "matchBreakdown"
+    | "matchPercentage"
+    | "hasDatingProfile"
+    | "createdAt"
+    | "updatedAt"
+    | "datingProfileCreatedAt"
+  >
+>;

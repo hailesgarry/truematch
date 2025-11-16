@@ -5,11 +5,7 @@ import { fetchDatingProfiles } from "../services/api";
 import { useBroadcastChannel } from "./useBroadcastChannel";
 import { broadcastMessage } from "../lib/broadcast";
 
-export function useDatingProfilesQuery(
-  enabled: boolean = true,
-  viewer?: string
-) {
-  const viewerKey = viewer ?? "";
+export function useDatingProfilesQuery(enabled: boolean = true) {
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -46,14 +42,14 @@ export function useDatingProfilesQuery(
   }, []);
 
   const query = useQuery<DatingProfile[], Error>({
-    queryKey: [...datingProfilesKey, viewerKey],
+    queryKey: datingProfilesKey,
     enabled,
     queryFn: async () => {
       try {
-        return await fetchDatingProfiles({ timeoutMs: 7000, viewer });
+        return await fetchDatingProfiles({ timeoutMs: 7000 });
       } catch (e: any) {
         if (e?.code === "ECONNABORTED") {
-          return await fetchDatingProfiles({ timeoutMs: 12000, viewer });
+          return await fetchDatingProfiles({ timeoutMs: 12000 });
         }
         throw e;
       }
@@ -80,20 +76,15 @@ export function useDatingProfilesQuery(
     lastBroadcastRef.current = updatedAt;
     broadcastMessage("tm:dating", {
       type: "dating:refetched",
-      viewer: viewerKey,
     });
-  }, [query.isSuccess, query.isFetching, query.dataUpdatedAt, viewerKey]);
+  }, [query.isSuccess, query.isFetching, query.dataUpdatedAt]);
 
   useBroadcastChannel<
-    | { type: "dating:refetched"; viewer: string }
-    | { type: "dating:invalidate"; viewer?: string }
+    { type: "dating:refetched" } | { type: "dating:invalidate" }
   >("tm:dating", (payload) => {
     if (payload.type === "dating:refetched") {
-      if (payload.viewer !== viewerKey) {
-        return;
-      }
       queryClient.invalidateQueries({
-        queryKey: [...datingProfilesKey, viewerKey],
+        queryKey: datingProfilesKey,
         exact: true,
       });
       return;

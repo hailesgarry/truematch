@@ -1,9 +1,10 @@
 from fastapi import APIRouter, HTTPException
-from ..db import get_db
+from ..db import get_dating_db, get_db
 from ..db.mongo import ensure_likes_indexes
 from ..cache import cache as local_cache
 from ..cache_bus import publish_invalidate
 from ..collections import GROUP_MESSAGES_COLLECTION, DM_MESSAGES_COLLECTION
+from ..db.collections import DATING_PROFILES_COLLECTION
 
 router = APIRouter()
 
@@ -11,6 +12,7 @@ router = APIRouter()
 @router.post("/admin/ensure-indexes")
 async def ensure_indexes():
     db = get_db()
+    dating_db = get_dating_db()
     # Group messages: lookups by roomId/groupId, messageId, timestamp, createdAt
     await db[GROUP_MESSAGES_COLLECTION].create_index([("roomId", 1), ("createdAt", 1)])
     await db[GROUP_MESSAGES_COLLECTION].create_index([("groupId", 1), ("createdAt", 1)])
@@ -45,9 +47,9 @@ async def ensure_indexes():
     # Groups and profiles commonly accessed
     await db["groups"].create_index([("id", 1)], unique=True)
     # Use case-insensitive unique via usernameLower; keep username non-unique to avoid conflicts
-    await db["profiles"].create_index([("username", 1)], unique=False)
+    await dating_db[DATING_PROFILES_COLLECTION].create_index([("username", 1)], unique=False)
     try:
-        await db["profiles"].create_index(
+        await dating_db[DATING_PROFILES_COLLECTION].create_index(
             [("location.coordinates", "2dsphere")],
             name="profiles_location_2dsphere",
         )

@@ -10,6 +10,8 @@ export default {
         red: {
           500: "#FD1D1D", // Your brand color
         },
+        "chat-bubble": "#E9ECEF",
+        "reply-bubble": "#F5F7FA",
       },
       backgroundImage: {
         "primary-gradient":
@@ -27,13 +29,17 @@ export default {
       },
       fontSize: {
         // 15px for message text
-        message: "14px",
+        message: "0.9375rem",
       },
       fontFamily: {
         // Inter provides a modern, highly legible sans stack for chat UI
         sans: ["Inter", ...defaultTheme.fontFamily.sans],
         // Utility for logo text
         logo: ["Pacifico", "cursive"],
+      },
+      fontWeight: {
+        message: "470",
+        reply: "470",
       },
       lineHeight: {
         // industry-standard-ish tokens

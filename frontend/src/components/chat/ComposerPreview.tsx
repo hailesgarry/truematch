@@ -2,6 +2,7 @@ import React from "react";
 import { Microphone } from "@phosphor-icons/react";
 import { formatDuration } from "../../utils/formatDuration";
 import { useAudioDuration } from "../../hooks/useAudioDuration";
+import { PREVIEW_SURFACE_CLASSES } from "./previewSurfaceClasses";
 
 type AnimatedSources = {
   mp4?: string;
@@ -57,7 +58,9 @@ const ComposerPreviewBase: React.FC<ComposerPreviewBaseProps> = ({
   children,
 }) => {
   return (
-    <div className="mb-3 px-3 py-2 rounded-md bg-gray-100 relative flex flex-col gap-1">
+    <div
+      className={`mb-3 px-3 py-2 rounded-md ${PREVIEW_SURFACE_CLASSES} relative flex flex-col gap-1`}
+    >
       <div className="text-[11px] uppercase tracking-wide text-gray-500 font-medium">
         {title}
       </div>

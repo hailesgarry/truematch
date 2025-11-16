@@ -14,7 +14,9 @@ pip install -r requirements.txt
 3. Configure environment variables:
 
 - MONGO_URI=<your MongoDB connection string>
-- MONGO_DB_NAME=truematch (default)
+- MONGO_DB_NAME=jesseiniya2023 (default)
+- MONGO_USER_DB=<override collection database> (optional, defaults to `MONGO_DB_NAME`)
+- MONGO_DATING_DB=<override collection database> (optional, defaults to `MONGO_DB_NAME`)
 - CORS_ORIGIN=http://localhost:5173 (frontend)
 - PY_BACKEND_PORT=8081 (optional)
 
@@ -37,6 +39,12 @@ On PowerShell, ensure `%PY_BACKEND_PORT%` is defined or replace it with a number
 - File uploads (avatars/chat media) are handled here via Cloudinary. Configure CLOUDINARY_URL or CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET in .env.
 - MongoDB indices can be added as needed.
 - When Redis pub/sub is enabled, the service publishes lightweight events on message writes and runs a background subscriber to maintain a materialized "latest messages" read model per group. The `GET /api/messages/{groupId}/latest` endpoint consults this read model first, which significantly speeds up first-load latency and reduces query cost. If Redis pub/sub is disabled or unavailable, the API continues to function using direct indexed queries and local TTL caches.
+
+### Database layout
+
+- The authentication and profile service now stores user records in the `user_profiles` collection within the database resolved by `MONGO_DB_NAME` (default `jesseiniya2023`). `MONGO_USER_DB` can still override the target database when isolation is required. Documents always include `_id`, `userId`, `username`, timestamps, and optional preference metadata.
+- Dating profiles live alongside user profiles in the same database (default `jesseiniya2023`) using the `dating_profiles` collection. `MONGO_DATING_DB` remains available when an alternate database is explicitly desired. Each entry references the owning user via the `userProfileId` (ObjectId) and `userId` fields. Create/read/update APIs are exposed under `/api/dating-profiles` and validate that the referenced user exists before writing.
+- Existing caches and reporting code should read user-centric information from `user_profiles` and relationship data from `dating_profiles`. Both databases reuse the shared Motor client configured at startup. During startup the service purges any legacy `profiles`/`dating-profile` collections and deletes dating profile documents that still carry legacy fields so the canonical `dating_profiles` collection stays clean.
 
 ### Quick Redis dev setup (Windows-friendly)
 

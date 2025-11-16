@@ -4,9 +4,27 @@ from typing import Any, List, Optional, Tuple
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 
+from ..config import get_settings
+from ..db.collections import DATING_PROFILES_COLLECTION, USER_PROFILES_COLLECTION
 from ..db.mongo import get_likes_collection
 from ..models.likes import LikedUser
 from ..services.dating_profile_service import resolve_primary_photo
+
+_SETTINGS = get_settings()
+
+
+def _resolve_lookup_namespace(db_name: str, collection: str) -> str:
+    if db_name == _SETTINGS.mongo_db:
+        return collection
+    return f"{db_name}.{collection}"
+
+
+_USER_LOOKUP_NAMESPACE = _resolve_lookup_namespace(
+    _SETTINGS.mongo_user_db, USER_PROFILES_COLLECTION
+)
+_DATING_LOOKUP_NAMESPACE = _resolve_lookup_namespace(
+    _SETTINGS.mongo_dating_db, DATING_PROFILES_COLLECTION
+)
 
 
 def _clean_str(value: Any) -> Optional[str]:
@@ -131,7 +149,7 @@ async def get_likes_received(
         {"$match": {"reverse": {"$eq": []}}},
         {
             "$lookup": {
-                "from": "profiles",
+                "from": _USER_LOOKUP_NAMESPACE,
                 "localField": "liker_id",
                 "foreignField": "userId",
                 "as": "profile",
@@ -140,7 +158,7 @@ async def get_likes_received(
         {"$unwind": {"path": "$profile", "preserveNullAndEmptyArrays": True}},
         {
             "$lookup": {
-                "from": "dating_profiles",
+                "from": _DATING_LOOKUP_NAMESPACE,
                 "localField": "liker_id",
                 "foreignField": "userId",
                 "as": "dating_profile",
@@ -177,7 +195,10 @@ async def get_likes_received(
                 "user_id": "$liker_id",
                 "username": "$profile.username",
                 "name": {
-                    "$ifNull": ["$profile.displayName", "$profile.username"]
+                    "$ifNull": [
+                        "$dating_profile.firstName",
+                        {"$ifNull": ["$profile.firstName", "$profile.username"]},
+                    ]
                 },
                 "avatar": "$profile.avatarUrl",
                 "profile_avatar": "$profile.avatarUrl",
@@ -291,7 +312,7 @@ async def get_matches(
         {"$match": {"reverse": {"$ne": []}}},
         {
             "$lookup": {
-                "from": "profiles",
+                "from": _USER_LOOKUP_NAMESPACE,
                 "localField": "liked_id",
                 "foreignField": "userId",
                 "as": "profile",
@@ -300,7 +321,7 @@ async def get_matches(
         {"$unwind": {"path": "$profile", "preserveNullAndEmptyArrays": True}},
         {
             "$lookup": {
-                "from": "dating_profiles",
+                "from": _DATING_LOOKUP_NAMESPACE,
                 "localField": "liked_id",
                 "foreignField": "userId",
                 "as": "dating_profile",
@@ -365,7 +386,10 @@ async def get_matches(
                 "user_id": "$liked_id",
                 "username": "$profile.username",
                 "name": {
-                    "$ifNull": ["$profile.displayName", "$profile.username"]
+                    "$ifNull": [
+                        "$dating_profile.firstName",
+                        {"$ifNull": ["$profile.firstName", "$profile.username"]},
+                    ]
                 },
                 "avatar": "$profile.avatarUrl",
                 "profile_avatar": "$profile.avatarUrl",

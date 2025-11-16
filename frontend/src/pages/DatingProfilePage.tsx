@@ -22,6 +22,8 @@ import { useAuthStore } from "../stores/authStore";
 import { useUiStore } from "../stores/uiStore";
 import {
   fetchDatingProfile,
+  fetchDatingProfilePhotos,
+  updateDatingProfilePhotos,
   removeDatingPhoto,
   saveDatingProfile,
   uploadDatingPhoto,
@@ -385,6 +387,12 @@ const placementMapsEqual = (
 
 const MAX_SECONDARY_PHOTOS = 5;
 
+const sanitizePhotoSource = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+};
+
 const DatingProfilePage: React.FC<DatingProfilePageProps> = ({
   hideTitle,
   allowEdit,
@@ -423,14 +431,36 @@ const DatingProfilePage: React.FC<DatingProfilePageProps> = ({
     [targetUserId, targetUsername]
   );
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery<DatingProfile | null>({
     queryKey: ["datingProfile", profileQueryKey],
-    queryFn: () =>
-      fetchDatingProfile(
+    queryFn: async () => {
+      const baseProfile = await fetchDatingProfile(
         targetUserId
           ? { userId: targetUserId }
           : { username: String(targetUsername) }
-      ),
+      );
+
+      if (targetUserId) {
+        try {
+          const photosPayload = await fetchDatingProfilePhotos(targetUserId);
+          if (photosPayload) {
+            if (baseProfile) {
+              return {
+                ...baseProfile,
+                photos: photosPayload.photos,
+                primaryPhotoUrl:
+                  photosPayload.primaryPhotoUrl ?? baseProfile.primaryPhotoUrl,
+              };
+            }
+            return photosPayload;
+          }
+        } catch (error) {
+          console.warn("Failed to fetch secondary photos", error);
+        }
+      }
+
+      return baseProfile;
+    },
     enabled: Boolean(targetUserId || targetUsername),
   });
 
@@ -527,22 +557,20 @@ const DatingProfilePage: React.FC<DatingProfilePageProps> = ({
 
   const primaryPhoto = useMemo(() => {
     if (!profile) return "";
-    const pick = (value: unknown): string | null => {
-      if (typeof value !== "string") return null;
-      const trimmed = value.trim();
-      return trimmed.length ? trimmed : null;
-    };
-
-    return (
-      pick(profile.photoUrl) ||
-      pick(profile.photo) ||
-      (Array.isArray(profile.photos)
-        ? profile.photos
-            .map(pick)
-            .find((value): value is string => Boolean(value))
-        : null) ||
-      ""
-    );
+    const candidates: unknown[] = [
+      profile.primaryPhotoUrl,
+      profile.profileAvatarUrl,
+    ];
+    if (Array.isArray(profile.photos)) {
+      candidates.push(...profile.photos);
+    }
+    for (const candidate of candidates) {
+      const sanitized = sanitizePhotoSource(candidate);
+      if (sanitized) {
+        return sanitized;
+      }
+    }
+    return "";
   }, [profile]);
 
   const secondaryPhotos = useMemo(() => {
@@ -551,12 +579,11 @@ const DatingProfilePage: React.FC<DatingProfilePageProps> = ({
     const results: string[] = [];
     const primary = primaryPhoto;
     const push = (value: unknown) => {
-      if (typeof value !== "string") return;
-      const trimmed = value.trim();
-      if (!trimmed || trimmed === primary) return;
-      if (!seen.has(trimmed)) {
-        seen.add(trimmed);
-        results.push(trimmed);
+      const sanitized = sanitizePhotoSource(value);
+      if (!sanitized || sanitized === primary) return;
+      if (!seen.has(sanitized)) {
+        seen.add(sanitized);
+        results.push(sanitized);
       }
     };
 
@@ -564,8 +591,8 @@ const DatingProfilePage: React.FC<DatingProfilePageProps> = ({
       for (const value of profile.photos) push(value);
     }
 
-    push(profile.photo);
-    push(profile.photoUrl);
+    push(profile.profileAvatarUrl);
+    push(profile.primaryPhotoUrl);
 
     return results.slice(0, MAX_SECONDARY_PHOTOS);
   }, [primaryPhoto, profile]);
@@ -674,10 +701,11 @@ const DatingProfilePage: React.FC<DatingProfilePageProps> = ({
         );
         return;
       }
-      if (!authUsername) {
+      if (!authUsername || !authUserId) {
         showToast("Please sign in to upload photos.", 2500, "error");
         return;
       }
+      const ensuredAuthUserId = authUserId!;
       if (!file.type.toLowerCase().startsWith("image/")) {
         showToast("Please choose an image file.", 3000, "error");
         return;
@@ -701,16 +729,22 @@ const DatingProfilePage: React.FC<DatingProfilePageProps> = ({
         setPendingSecondaryId("__pending-secondary__");
       }
       try {
-        const { url } = await uploadDatingPhoto(file, String(authUsername));
+        const usernameForUpload = String(authUsername).trim();
+        const { url } = await uploadDatingPhoto(file, usernameForUpload);
+        const uploadedUrl = sanitizePhotoSource(url);
+        if (!uploadedUrl) {
+          throw new Error("Empty photo URL returned from upload");
+        }
         const previousPrimary = primaryPhoto || null;
-        const dedupe = (values: string[]) => {
+        const dedupe = (values: Array<string | null | undefined>) => {
           const seen = new Set<string>();
           const ordered: string[] = [];
           for (const value of values) {
-            if (!seen.has(value)) {
-              seen.add(value);
-              ordered.push(value);
-            }
+            const sanitized = sanitizePhotoSource(value);
+            if (!sanitized) continue;
+            if (seen.has(sanitized)) continue;
+            seen.add(sanitized);
+            ordered.push(sanitized);
           }
           return ordered;
         };
@@ -719,24 +753,25 @@ const DatingProfilePage: React.FC<DatingProfilePageProps> = ({
         let nextSecondary: string[] = [];
 
         if (shouldSetPrimary) {
-          nextPrimary = url;
+          nextPrimary = uploadedUrl;
           nextSecondary = dedupe(
-            secondaryPhotos.filter((value) => value !== url)
+            secondaryPhotos.filter((value) => value !== uploadedUrl)
           ).slice(0, MAX_SECONDARY_PHOTOS);
         } else {
           const baseSecondary = [
-            ...secondaryPhotos.filter((value) => value !== url),
-            url,
+            ...secondaryPhotos.filter((value) => value !== uploadedUrl),
+            uploadedUrl,
           ];
           nextSecondary = dedupe(baseSecondary).slice(0, MAX_SECONDARY_PHOTOS);
         }
 
-        const updatedProfile = await saveDatingProfile({
-          username: String(authUsername),
-          photos: nextSecondary,
-          photoUrl: nextPrimary ?? null,
-          photo: nextPrimary ?? null,
-        });
+        const updatedProfile = shouldSetPrimary
+          ? await saveDatingProfile({
+              userId: ensuredAuthUserId,
+              photos: nextSecondary,
+              primaryPhotoUrl: nextPrimary ?? null,
+            })
+          : await updateDatingProfilePhotos(ensuredAuthUserId, nextSecondary);
 
         setProfile(updatedProfile);
         setProfileCache(updatedProfile);
@@ -1824,7 +1859,7 @@ const DatingProfilePage: React.FC<DatingProfilePageProps> = ({
 
   const handlePhotoDelete = useCallback(
     async (photo: PhotoDragDropPhoto) => {
-      if (!canManagePhotos || !authUsername) {
+      if (!canManagePhotos || !authUsername || !authUserId) {
         return;
       }
 
@@ -1840,10 +1875,7 @@ const DatingProfilePage: React.FC<DatingProfilePageProps> = ({
       });
 
       try {
-        const updatedProfile = await removeDatingPhoto(
-          String(authUsername),
-          photoUrl
-        );
+        const updatedProfile = await removeDatingPhoto(authUserId, photoUrl);
 
         setProfile(updatedProfile);
         setProfileCache(updatedProfile);
@@ -1867,6 +1899,7 @@ const DatingProfilePage: React.FC<DatingProfilePageProps> = ({
       }
     },
     [
+      authUserId,
       authUsername,
       broadcastDatingProfileUpdate,
       canManagePhotos,
@@ -1885,7 +1918,7 @@ const DatingProfilePage: React.FC<DatingProfilePageProps> = ({
           : `Photo moved to ${sectionLabel || "this section"}.`;
       openSuccessToast(message);
 
-      if (!canManagePhotos || !authUsername) {
+      if (!canManagePhotos || !authUsername || !authUserId) {
         return;
       }
 
@@ -1911,7 +1944,7 @@ const DatingProfilePage: React.FC<DatingProfilePageProps> = ({
 
       try {
         const updatedProfile = await saveDatingProfile({
-          username: String(authUsername),
+          userId: authUserId,
           photoPlacements: placementsToPersist,
         });
         setProfile(updatedProfile);
@@ -1941,6 +1974,7 @@ const DatingProfilePage: React.FC<DatingProfilePageProps> = ({
       }
     },
     [
+      authUserId,
       authUsername,
       broadcastDatingProfileUpdate,
       canManagePhotos,

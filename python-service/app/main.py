@@ -16,7 +16,14 @@ except Exception:
     _DEFAULT_RESPONSE_CLS = JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
-from .db import connect_to_mongo, close_mongo_connection
+from .db import (
+    close_mongo_connection,
+    connect_to_mongo,
+    get_client,
+    get_core_db,
+    get_dating_db,
+    get_user_db,
+)
 from .routers import (
     groups,
     dating,
@@ -30,6 +37,7 @@ from .routers import (
     filters,
     likes,
     user_profiles,
+    dating_profiles_api,
 )
 import asyncio
 
@@ -147,6 +155,7 @@ app.include_router(push.router, prefix="/api", tags=["push"])
 app.include_router(auth.router, prefix="/api", tags=["auth"])
 app.include_router(filters.router, prefix="/api", tags=["message-filters"])
 app.include_router(user_profiles.router, prefix="/api")
+app.include_router(dating_profiles_api.router, prefix="/api")
 app.include_router(likes.router, prefix="/api")
 
 @app.get("/")
@@ -155,11 +164,24 @@ async def root():
  
 @app.get("/api/health/db") 
 async def db_health():
-    from .db import _client as _mongo_client, _db as _mongo_db
-    ok = bool(_mongo_client) and bool(_mongo_db)
+    try:
+        client = get_client()
+        core_db = get_core_db()
+        user_db = get_user_db()
+        dating_db = get_dating_db()
+        ok = bool(client) and bool(core_db) and bool(user_db) and bool(dating_db)
+    except RuntimeError:
+        ok = False
+        core_db = user_db = dating_db = None
+
+    settings = get_settings()
     return {
         "mongo": "connected" if ok else "disconnected",
-        "db": str(get_settings().mongo_db),
+        "databases": {
+            "core": getattr(core_db, "name", settings.mongo_db),
+            "user": getattr(user_db, "name", settings.mongo_user_db),
+            "dating": getattr(dating_db, "name", settings.mongo_dating_db),
+        },
     }
 
 # Redis health endpoint removed

@@ -15,11 +15,59 @@ type LikedMeLocationState = {
 const LikedMePage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { username: rawUsername = "" } = useParams<{ username: string }>();
+  const { userId: rawUserId = "" } = useParams<{ userId: string }>();
 
-  const username = React.useMemo(() => rawUsername.trim(), [rawUsername]);
+  const routeIdentifier = React.useMemo(() => rawUserId.trim(), [rawUserId]);
   const locationState = location.state as LikedMeLocationState | undefined;
   const stateProfile = locationState?.profile ?? null;
+
+  const stateUserId = React.useMemo(() => {
+    if (typeof stateProfile?.userId === "string") {
+      return stateProfile.userId.trim();
+    }
+    return "";
+  }, [stateProfile]);
+
+  const stateUsername = React.useMemo(() => {
+    if (typeof stateProfile?.username === "string") {
+      return stateProfile.username.trim();
+    }
+    return "";
+  }, [stateProfile]);
+
+  const queryKeyIdentifier = React.useMemo(() => {
+    return (
+      stateUserId ||
+      routeIdentifier ||
+      stateUsername ||
+      ""
+    ).toLowerCase();
+  }, [stateUserId, routeIdentifier, stateUsername]);
+
+  const shouldFetchProfile = React.useMemo(() => {
+    return Boolean(stateUserId || routeIdentifier || stateUsername);
+  }, [stateUserId, routeIdentifier, stateUsername]);
+
+  const fetchProfile = React.useCallback(async () => {
+    if (!shouldFetchProfile) return null;
+
+    if (stateUserId) {
+      const byState = await fetchDatingProfile({ userId: stateUserId });
+      if (byState) return byState;
+    }
+
+    if (routeIdentifier && routeIdentifier !== stateUserId) {
+      const byRouteId = await fetchDatingProfile({ userId: routeIdentifier });
+      if (byRouteId) return byRouteId;
+    }
+
+    const candidateUsername = stateUsername || routeIdentifier;
+    if (candidateUsername) {
+      return fetchDatingProfile({ username: candidateUsername });
+    }
+
+    return null;
+  }, [shouldFetchProfile, stateUserId, routeIdentifier, stateUsername]);
 
   const {
     data: fetchedProfile,
@@ -28,9 +76,9 @@ const LikedMePage: React.FC = () => {
     isError,
     refetch,
   } = useQuery<DatingProfile | null>({
-    queryKey: ["likedMeProfile", username.toLowerCase()],
-    queryFn: () => fetchDatingProfile({ username }),
-    enabled: username.length > 0,
+    queryKey: ["likedMeProfile", queryKeyIdentifier],
+    queryFn: fetchProfile,
+    enabled: shouldFetchProfile,
     initialData: stateProfile ?? undefined,
   });
 
@@ -92,7 +140,7 @@ const LikedMePage: React.FC = () => {
     const parts = [profile.firstName, profile.displayName]
       .map((value) => (typeof value === "string" ? value.trim() : ""))
       .filter((value) => value.length > 0);
-    return parts[0] || profile.username || "";
+    return parts[0] || profile.username || profile.userId || "";
   }, [profile]);
 
   const handleBack = React.useCallback(() => {
@@ -203,7 +251,7 @@ const LikedMePage: React.FC = () => {
                 <DatingCard
                   className="h-full max-h-full"
                   firstName={firstName}
-                  username={profile.username}
+                  username={profile.username || profile.userId || ""}
                   status={typeof profile.mood === "string" ? profile.mood : ""}
                   age={
                     typeof profile.age === "number" ? profile.age : undefined

@@ -4,6 +4,7 @@ export type LikeCardProps = {
   username: string;
   firstName?: string | null;
   age?: number | null;
+  primaryPhotoUrl?: string | null;
   photos?: string[] | null;
   imageUrl?: string | null;
   className?: string;
@@ -14,6 +15,7 @@ const LikeCard: React.FC<LikeCardProps> = ({
   username,
   firstName,
   age = null,
+  primaryPhotoUrl = null,
   photos = null,
   imageUrl = null,
   className = "",
@@ -25,18 +27,23 @@ const LikeCard: React.FC<LikeCardProps> = ({
   }`;
 
   const primaryPhoto = React.useMemo(() => {
-    if (Array.isArray(photos)) {
-      for (const src of photos) {
-        if (typeof src === "string" && src.trim()) {
-          return src.trim();
+    const candidates: Array<string | null | undefined> = [
+      primaryPhotoUrl,
+      ...(Array.isArray(photos) ? photos : []),
+      imageUrl,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === "string") {
+        const trimmed = candidate.trim();
+        if (trimmed) {
+          return trimmed;
         }
       }
     }
-    if (typeof imageUrl === "string" && imageUrl.trim()) {
-      return imageUrl.trim();
-    }
+
     return "/placeholder.jpg";
-  }, [photos, imageUrl]);
+  }, [imageUrl, photos, primaryPhotoUrl]);
 
   const handleOpen = React.useCallback(() => {
     onOpenProfile?.();

@@ -33,7 +33,7 @@ const Header = ({ onAvatarClick, onHeartClick }: HeaderProps) => {
     groupUnreadCount > 0;
 
   return (
-    <div className="app-header fixed inset-x-0 top-0 z-20 grid grid-cols-3 items-center px-4 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80">
+    <div className="app-header fixed inset-x-0 top-0 z-20 flex items-center justify-between px-4 h-14 border-b border-gray-100 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80">
       {/* Left: menu trigger */}
       <div className="flex items-center">
         <button
@@ -46,7 +46,7 @@ const Header = ({ onAvatarClick, onHeartClick }: HeaderProps) => {
       </div>
 
       {/* Center: App logo */}
-      <div className="flex items-center justify-center">
+      <div className="flex items-center justify-center absolute left-1/2 -translate-x-1/2">
         <picture>
           {/* Prefer PNG sources for faster paint + crisp rendering; SVG as guaranteed fallback */}
           <source srcSet="/truematch-logomark.png" type="image/png" />

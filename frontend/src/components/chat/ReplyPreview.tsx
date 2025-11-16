@@ -48,9 +48,11 @@ const ReplyPreview: React.FC<ReplyPreviewProps> = ({
   isVideoUrl,
   truncate,
 }) => {
-  // Intentionally reference currentUsername to satisfy noUnusedParameters while
-  // ensuring we always display the actual username in the UI.
-  void currentUsername;
+  const normalizedCurrentUser = (currentUsername || "").trim().toLowerCase();
+  const normalizedReplyUser = (reply.username || "").trim().toLowerCase();
+  const fromSelf =
+    normalizedCurrentUser.length > 0 &&
+    normalizedCurrentUser === normalizedReplyUser;
   const replyText = reply.text || "";
   const replyTrimmed = replyText.trim();
   const replyIsGifUrl = isGifUrl(replyTrimmed) && !replyTrimmed.includes(" ");
@@ -82,12 +84,23 @@ const ReplyPreview: React.FC<ReplyPreviewProps> = ({
 
   const hasMediaPreview = replyIndicatesMedia && !replyVoiceNote;
   const replyDeleted = Boolean(reply.deleted);
-
   const rootClass = [
-    "text-sm mb-1 px-2 py-1 rounded-xl text-gray-600 cursor-pointer focus:outline-none",
+    "text-sm mb-1 px-2 py-1 rounded-xl text-gray-600 cursor-pointer focus:outline-none font-reply",
     "flex flex-col gap-1",
+    fromSelf ? "" : "bg-reply-bubble",
     hasMediaPreview ? "items-end text-right ml-auto" : "items-start text-left",
-  ].join(" ");
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const rootStyle = React.useMemo<React.CSSProperties>(() => {
+    if (fromSelf) {
+      return {
+        background: fgColorForBubble === "#ffffff" ? "#f8fafc" : "#E9ECEF",
+      };
+    }
+    return {};
+  }, [fromSelf, fgColorForBubble]);
 
   return (
     <div
@@ -113,12 +126,9 @@ const ReplyPreview: React.FC<ReplyPreviewProps> = ({
         }
       }}
       className={rootClass}
-      style={{
-        background: fgColorForBubble === "#ffffff" ? "#f8fafc" : "#e2e8f0",
-        border: "1px solid #cbd5f5",
-      }}
+      style={rootStyle}
     >
-      <div className="text-sm font-semibold text-gray-800 leading-tight">
+      <div className="text-sm font-bold text-gray-800 leading-tight">
         {reply.username}
       </div>
       <div>

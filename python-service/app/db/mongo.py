@@ -1,8 +1,7 @@
-from typing import Final
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ASCENDING, DESCENDING
 
-LIKES_COLLECTION: Final[str] = "likes"
+from .collections import LIKES_COLLECTION
 
 async def ensure_likes_indexes(db: AsyncIOMotorDatabase) -> None:
     collection = db[LIKES_COLLECTION]

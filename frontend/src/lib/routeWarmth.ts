@@ -1,5 +1,4 @@
 import { datingProfilesKey } from "../hooks/useDatingProfilesQuery";
-import { useAuthStore } from "../stores/authStore";
 import { isQueryFresh } from "./queryDiagnostics";
 
 type RouteWarmthContext = {
@@ -44,8 +43,7 @@ const policies: RoutePolicy[] = [
   {
     match: ({ pathname }) => pathname === "/dating",
     isWarm: () => {
-      const viewer = (useAuthStore.getState().username || "").trim();
-      return isQueryFresh([...datingProfilesKey, viewer], {
+      return isQueryFresh(datingProfilesKey, {
         staleTime: 5 * 60_000,
       });
     },

@@ -35,7 +35,8 @@ type BasicInfoState = {
 };
 
 type CreateProfileInput = {
-  username: string;
+  userId: string;
+  username?: string;
   firstName: string;
   ageNumber?: number;
   gender: string;
@@ -54,7 +55,7 @@ const CreateDatingProfile: React.FC<CreateDatingProfileProps> = ({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const showToast = useUiStore((s) => s.showToast);
-  const { username, joined } = useAuthStore();
+  const { userId, username, joined } = useAuthStore();
 
   const [step, setStep] = useState(0);
   const [basicInfo, setBasicInfo] = useState<BasicInfoState>(() => ({
@@ -151,7 +152,7 @@ const CreateDatingProfile: React.FC<CreateDatingProfileProps> = ({
 
   const mutation = useMutation<DatingProfile, unknown, CreateProfileInput>({
     mutationFn: async ({
-      username: user,
+      userId: userIdInput,
       firstName,
       ageNumber: ageValue,
       gender,
@@ -159,6 +160,10 @@ const CreateDatingProfile: React.FC<CreateDatingProfileProps> = ({
       location: loc,
       coordinates,
     }) => {
+      const normalizedUserId = userIdInput.trim();
+      if (!normalizedUserId) {
+        throw new Error("userId required");
+      }
       const formattedLocation = [loc.cityName, loc.stateName, loc.countryName]
         .filter(Boolean)
         .join(", ");
@@ -179,19 +184,23 @@ const CreateDatingProfile: React.FC<CreateDatingProfileProps> = ({
       }
 
       const profilePayload: DatingProfileUpsert = {
-        username: user,
-        gender,
+        userId: normalizedUserId,
       };
+
+      if (gender.trim()) {
+        profilePayload.gender = gender;
+      }
 
       if (typeof ageValue === "number") {
         profilePayload.age = ageValue;
       }
 
-      profilePayload.location = locationPayload;
+      if (locationPayload !== null) {
+        profilePayload.location = locationPayload;
+      }
 
       const trimmedFirstName = firstName.trim();
       if (trimmedFirstName) {
-        profilePayload.displayName = trimmedFirstName;
         profilePayload.firstName = trimmedFirstName;
       }
 
@@ -205,12 +214,20 @@ const CreateDatingProfile: React.FC<CreateDatingProfileProps> = ({
     },
     onSuccess: async (_profile, variables) => {
       showToast("Your dating profile is live!", 3000);
-      await Promise.all([
+      const tasks: Promise<unknown>[] = [
         queryClient.invalidateQueries({
-          queryKey: ["datingProfile", variables.username],
+          queryKey: ["datingProfile", variables.userId],
         }),
         queryClient.invalidateQueries({ queryKey: datingProfilesKey }),
-      ]);
+      ];
+      if (variables.username) {
+        tasks.push(
+          queryClient.invalidateQueries({
+            queryKey: ["datingProfile", variables.username],
+          })
+        );
+      }
+      await Promise.all(tasks);
       broadcastMessage("tm:dating", { type: "dating:invalidate" });
       navigate("/onboarding", { replace: true });
     },
@@ -271,7 +288,7 @@ const CreateDatingProfile: React.FC<CreateDatingProfileProps> = ({
       return;
     }
 
-    if (!username) {
+    if (!userId) {
       setError("Sign in to create your dating profile.");
       showToast("Sign in to continue", 2500);
       return;
@@ -301,6 +318,7 @@ const CreateDatingProfile: React.FC<CreateDatingProfileProps> = ({
 
     try {
       await mutation.mutateAsync({
+        userId,
         username,
         firstName: basicInfo.firstName.trim(),
         ageNumber,

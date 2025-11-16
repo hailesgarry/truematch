@@ -38,20 +38,20 @@ function App() {
               queryFn: () => fetchGroups(false),
               staleTime: 5 * 60 * 1000,
             });
+          }
+          if (auth.userId) {
             // Prefetch dating profiles
             queryClient.prefetchQuery({
-              queryKey: [...datingProfilesKey, auth.username],
-              queryFn: () => fetchDatingProfiles({ viewer: auth.username }),
+              queryKey: datingProfilesKey,
+              queryFn: () => fetchDatingProfiles(),
               staleTime: 5 * 60 * 1000,
             });
             // Prefetch current user's dating profile
-            if (auth.userId) {
-              queryClient.prefetchQuery({
-                queryKey: ["datingProfile", auth.userId],
-                queryFn: () => fetchDatingProfile({ userId: auth.userId }),
-                staleTime: 5 * 60 * 1000,
-              });
-            }
+            queryClient.prefetchQuery({
+              queryKey: ["datingProfile", auth.userId],
+              queryFn: () => fetchDatingProfile({ userId: auth.userId }),
+              staleTime: 5 * 60 * 1000,
+            });
           }
         }, 500); // Wait a bit after connect
       }, 100);

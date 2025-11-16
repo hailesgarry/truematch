@@ -3,7 +3,7 @@ import GroupsListContainer from "../components/groups/GroupsListContainer.tsx";
 
 const Home: React.FC = () => {
   return (
-    <div className="min-h-screen bg-slate-100">
+    <div className="min-h-screen bg-gray-50">
       <GroupsListContainer />
     </div>
   );
